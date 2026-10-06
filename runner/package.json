@@ -1,0 +1,12 @@
+{
+  "name": "veriflow-runner",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node worker.mjs",
+    "once": "node worker.mjs --once"
+  },
+  "dependencies": {},
+  "engines": { "node": ">=22.5" }
+}

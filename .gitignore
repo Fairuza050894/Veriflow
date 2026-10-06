@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+.data/
+runner/work/
+runner/node_modules/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+.vercel
+next-env.d.ts
+runner/reports/
+coverage/
+*.log

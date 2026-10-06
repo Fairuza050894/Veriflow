@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────
+   VERIFLOW — tema sinematik logistik.
+   Palet: biru-petrol malam (#070b14) + amber lampu-lahar trucks (#f59e0b)
+          + cyan dispatch (#22d3ee). Aksen luminous, panel kaca, grid rute.
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  --color-night-950: #05080f;
+  --color-night-900: #070b14;
+  --color-night-850: #0b1220;
+  --color-night-800: #0f172a;
+  --color-night-700: #16213a;
+  --color-night-600: #1e2b47;
+  --color-amber-glow: #f59e0b;
+  --color-amber-deep: #b45309;
+  --color-dispatch: #22d3ee;
+  --color-dispatch-deep: #0e7490;
+  --color-go: #22c55e;
+  --color-hold: #eab308;
+  --color-stop: #ef4444;
+  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  border-color: color-mix(in oklab, var(--color-night-600) 70%, transparent);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-night-950);
+  color: #e2e8f0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(900px 420px at 12% -8%, rgba(34, 211, 238, 0.10), transparent 62%),
+    radial-gradient(760px 420px at 92% 4%, rgba(245, 158, 11, 0.09), transparent 60%),
+    linear-gradient(180deg, #070b14 0%, #05080f 55%, #05080f 100%);
+  background-attachment: fixed;
+}
+
+/* Grid rute (peta logistik) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 78%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(ellipse at 50% 120%, rgba(5, 8, 15, 0.9), transparent 55%);
+}
+
+@layer components {
+  .panel {
+    position: relative;
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    background:
+      linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(7, 11, 20, 0.82));
+    backdrop-filter: blur(14px);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 18px 40px -24px rgba(0, 0, 0, 0.9);
+  }
+
+  .panel-hover {
+    transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  }
+  .panel-hover:hover {
+    border-color: rgba(34, 211, 238, 0.34);
+    transform: translateY(-1px);
+    box-shadow: 0 24px 48px -26px rgba(34, 211, 238, 0.35);
+  }
+
+  .glow-amber {
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 34px -8px rgba(245, 158, 11, 0.45);
+  }
+  .glow-cyan {
+    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 0 34px -8px rgba(34, 211, 238, 0.4);
+  }
+
+  .kpi-label {
+    font-size: 0.6875rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #64748b;
+    font-weight: 600;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 0.15rem 0.55rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: 0.7rem;
+    padding: 0.55rem 0.95rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: all 160ms ease;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .btn-primary {
+    background: linear-gradient(120deg, var(--color-amber-glow), #d97706);
+    color: #1a1205;
+    box-shadow: 0 10px 26px -12px rgba(245, 158, 11, 0.75);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+  .btn-ghost {
+    background: rgba(148, 163, 184, 0.08);
+    border-color: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+  }
+  .btn-ghost:hover {
+    background: rgba(148, 163, 184, 0.14);
+    color: #fff;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .hairline {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.25), transparent);
+  }
+
+  /* Animasi */
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.82); }
+  }
+  .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+  @keyframes sweep {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(220%); }
+  }
+  .sweep::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.16), transparent);
+    animation: sweep 2.6s linear infinite;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .rise { animation: rise 320ms ease-out both; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #070b14; }
+::-webkit-scrollbar-thumb { background: #1e2b47; border-radius: 99px; border: 2px solid #070b14; }
+::-webkit-scrollbar-thumb:hover { background: #2b3b5e; }
+
+/* Mermaid viewer */
+.mermaid svg { max-width: 100%; height: auto; }
+.mermaid { background: #f8fafc; border-radius: 0.85rem; padding: 1rem; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Print: laporan PDF-friendly */
+@media print {
+  body { background: #fff; color: #000; }
+  body::before, body::after { display: none; }
+}
