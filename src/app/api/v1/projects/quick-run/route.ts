@@ -25,8 +25,14 @@ export async function POST(req: Request) {
   } catch {
     return problem(400, "Body harus berupa JSON valid");
   }
-  if (!body.repo_url || !/^(https|file):\/\//.test(body.repo_url)) {
-    return problem(422, "repo_url wajib diisi dengan URL HTTPS yang valid");
+  if (!body.repo_url || !/^https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(body.repo_url)) {
+    return problem(422, "repo_url harus berupa URL GitHub HTTPS valid (https://github.com/owner/repo)");
+  }
+
+  // Validasi branch: alphanumeric, dash, underscore, dot, slash, max 100 chars
+  const branch = body.branch ?? "main";
+  if (!/^[\w./-]{1,100}$/.test(branch)) {
+    return problem(422, "branch tidak valid (hanya alfanumerik, -, _, ., /, max 100 karakter)");
   }
 
   const orgId = one<{ id: string }>("SELECT id FROM organizations LIMIT 1")?.id;
@@ -59,20 +65,21 @@ export async function POST(req: Request) {
       [uid("rcp_"), project.id, email, "to", "id", nowIso()]);
   }
 
-  const { runId, duplicate } = await createRun({
+  const { runId, duplicate, reportToken } = await createRun({
     projectId: project.id,
     environmentId: envId,
     trigger: "manual",
     mode: body.mode,
     idempotencyKey: body.idempotency_key,
-    branch: body.branch ?? "main",
+    branch,
   });
 
   // Dijalankan sekali agar UI langsung punya progres; SSE melengkapi sisanya.
   advanceRun(runId).catch(() => {});
 
+  const reportLink = reportToken ? `/r/${reportToken}` : `/r/${runId}`;
   return NextResponse.json(
-    { project_id: project.id, run_id: runId, duplicate, stream: `/api/v1/runs/${runId}/stream`, environment_id: envId, recipients: targets },
+    { project_id: project.id, run_id: runId, duplicate, stream: `/api/v1/runs/${runId}/stream`, environment_id: envId, recipients: targets, report: reportLink },
     { status: duplicate ? 200 : 202 },
   );
 }

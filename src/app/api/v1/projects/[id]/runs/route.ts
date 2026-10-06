@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { one } from "@/lib/db";
 import { createRun, advanceRun } from "@/lib/pipeline/engine";
 import { notFound, problem } from "@/lib/http";
-import { reportTokenFor } from "@/lib/pipeline/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +23,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     ?? one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [id])?.id;
   if (!envId) return problem(422, "Project belum punya environment");
 
-  const { runId, duplicate } = await createRun({
+  const { runId, duplicate, reportToken } = await createRun({
     projectId: id,
     environmentId: envId,
     trigger: body.trigger ?? "manual",
@@ -34,8 +33,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   advanceRun(runId).catch(() => {});
 
+  const reportLink = reportToken ? `/r/${reportToken}` : `/r/${runId}`;
   return NextResponse.json(
-    { run_id: runId, project_id: id, duplicate, stream: `/api/v1/runs/${runId}/stream`, report: `/r/${reportTokenFor(runId)}` },
+    { run_id: runId, project_id: id, duplicate, stream: `/api/v1/runs/${runId}/stream`, report: reportLink },
     { status: duplicate ? 200 : 202 },
   );
 }

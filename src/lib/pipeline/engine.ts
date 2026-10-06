@@ -15,6 +15,7 @@ import { sendEmail } from "../mailer";
 import type { ArchModel, CoverageEntry, Analysis, TestPlan } from "../contracts";
 import { rng, fmtPct, clamp } from "../util";
 import type { Lang } from "../i18n";
+import { randomBytes } from "node:crypto";
 
 /**
  * ORCHESTRATOR — state machine durable (Arsitektur §4).
@@ -63,7 +64,7 @@ export function setStatus(runId: string, status: RunStatus, extra: Record<string
 export async function createRun(input: {
   projectId: string; environmentId?: string | null; trigger?: string;
   mode?: string; idempotencyKey?: string; commitSha?: string; branch?: string;
-}): Promise<{ runId: string; duplicate: boolean }> {
+}): Promise<{ runId: string; duplicate: boolean; reportToken?: string }> {
   const project = one<Record<string, unknown>>("SELECT * FROM projects WHERE id = ?", [input.projectId]);
   if (!project) throw new Error("project tidak ditemukan");
 
@@ -79,6 +80,7 @@ export async function createRun(input: {
   );
 
   const runId = uid("run_");
+  let token: string | undefined;
   tx(() => {
     dbRun(
       `INSERT INTO runs(id, project_id, environment_id, trigger, commit_sha, branch, mode, status, idempotency_key, started_at, created_at)
@@ -90,14 +92,14 @@ export async function createRun(input: {
     RUN_STEPS.forEach((name, i) => {
       dbRun("INSERT INTO run_steps(id, run_id, name, status, seq) VALUES(?,?,?,?,?)", [uid("st_"), runId, name, "pending", i]);
     });
-    // signed link report
-    const token = sha256(`${runId}:${nowIso()}:${Math.random()}`).slice(0, 48);
-    kvSet(`report_token:${runId}`, token);
+    // signed link report - use crypto.randomBytes for secure token
+    token = randomBytes(32).toString("hex");
+    // Don't store raw token in kv; only hash in database
     dbRun("INSERT INTO report_links(id, run_id, token_hash, expires_at) VALUES(?,?,?,?)",
       [uid("rl_"), runId, sha256(token), new Date(Date.now() + 14 * 864e5).toISOString()]);
   });
   log(runId, "QUEUED", `Run dibuat (trigger: ${input.trigger ?? "manual"}, mode: ${input.mode ?? project.mode})`);
-  return { runId, duplicate: false };
+  return { runId, duplicate: false, reportToken: token };
 }
 
 async function loadCtx(runId: string): Promise<Ctx | null> {

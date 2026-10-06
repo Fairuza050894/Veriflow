@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { publicReportByToken } from "@/lib/pipeline/actions";
+import { headers } from "next/headers";
+import { publicReportByToken, publicReportByRunId } from "@/lib/pipeline/actions";
 import { fmtPct, fmtDuration, fmtDate, shortSha } from "@/lib/util";
 import { fmtNum } from "@/lib/util";
 import type { RunSummary } from "@/lib/types";
@@ -9,14 +10,23 @@ export const dynamic = "force-dynamic";
 /**
  * Laporan read-only untuk stakeholder tanpa login (signed link, FR-RPT-07).
  * Halaman ini sengaja TIDAK memakai Shell dashboard — cleaned layout printable.
+ * Menerima baik token (signed) maupun runId sebagai fallback.
  */
 export default async function PublicReport({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const data = publicReportByToken(token);
+  // Try token first, then fall back to runId
+  let data = publicReportByToken(token);
+  if (!data) {
+    data = publicReportByRunId(token);
+  }
   if (!data) notFound();
 
+  // Security headers: noindex, no referrer
+  const headersList = await headers();
+  headersList.set("X-Robots-Tag", "noindex");
+  headersList.set("Referrer-Policy", "no-referrer");
+
   const s = data.summary as RunSummary | null;
-  const isCustomer = data.run.mode !== "REPORT_ONLY";
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -121,20 +131,6 @@ export default async function PublicReport({ params }: { params: Promise<{ token
                 ))}
               </tbody>
             </table>
-          </section>
-        ) : null}
-
-        {/* Temuan arsitektur — hanya untuk yang berhak (internal) */}
-        {isCustomer && data.findings.length ? (
-          <section className="mt-8">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Temuan arsitektur</h2>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
-              {data.findings.map((f) => (
-                <li key={f.code}>
-                  <span className="font-semibold">[{f.severity}]</span> {f.title} — {f.detail}
-                </li>
-              ))}
-            </ul>
           </section>
         ) : null}
 
