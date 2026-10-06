@@ -135,10 +135,13 @@ export default async function PublicReport({ params }: { params: Promise<{ token
         ) : null}
 
         <footer className="mt-10 border-t border-slate-200 pt-4 text-[11px] leading-relaxed text-slate-500">
+          <span className="inline-block bg-amber-100 text-amber-900 px-2 py-0.5 rounded text-xs font-semibold mb-2">SIMULASI</span>
+          <br />
           Laporan ini dibuat otomatis oleh Veriflow untuk run #{data.run.id.slice(-6)}.
           Struktur basis data, nama kolom, dan hostname internal tidak disertakan pada laporan untuk audiens customer
           (kebijakan privasi arsitektur). Tautan bertanda tangan ini kedaluwarsa dalam 14 hari.
           <br />Butuh akses dashboard? Hubungi tim QA pemilik project.
+          <br /><strong>Catatan:</strong> Data biaya, PR, dan model AI adalah simulasi (mock). Konfigurasikan OPENAI_API_KEY/ANTHROPIC_API_KEY untuk data nyata.
         </footer>
       </div>
     </div>

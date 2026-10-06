@@ -78,8 +78,10 @@ export function buildReportEmail(input: ReportInput): { subject: string; prehead
       </td></tr></table>
     </td></tr>
     <tr><td style="padding:16px 26px;background:#f8fafc;border-top:1px solid #e2e8f0;font:400 11px/1.7 sans-serif;color:#94a3b8">
-      Report lengkap dibuka lewat tautan bertanda tangan (kedaluwarsa 14 hari) — bukan lampiran.
+      <span style="display:inline-block;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-weight:600;font-size:10px;margin-bottom:4px">SIMULASI</span>
+      <br/>Report lengkap dibuka lewat tautan bertanda tangan (kedaluwarsa 14 hari) — bukan lampiran.
       <br/>Dikirim oleh Veriflow · Jalankan otomatis atas nama tim QA Anda.
+      <br/><strong>Catatan:</strong> Data biaya, PR, dan model AI adalah simulasi (mock). Konfigurasikan OPENAI_API_KEY/ANTHROPIC_API_KEY untuk data nyata.
     </td></tr>
   </table>
 </td></tr></table></body></html>`;
