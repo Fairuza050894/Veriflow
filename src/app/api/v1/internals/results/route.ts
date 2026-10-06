@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     usage?: { tokens_in?: number; tokens_out?: number; cost_usd?: number };
   };
   if (!body.run_id) return unprocessable("run_id wajib diisi");
-  const run = one<{ id: string }>("SELECT id FROM runs WHERE id = ?", [body.run_id]);
+  const run = await one<{ id: string }>("SELECT id FROM runs WHERE id = ?", [body.run_id]);
   if (!run) return problem(404, "Run tidak ditemukan");
 
   const tests = (body.tests ?? []).filter((t) => t && typeof t.testId === "string");
@@ -47,10 +47,10 @@ export async function POST(req: Request) {
   log(body.run_id, "EXECUTING", `runner eksternal mengirim hasil shard ${shardNo} (${tests.length} test)`, "info");
 
   // rangkai hasil seluruh shard
-  const total = Number(one<{ n: string }>("SELECT COUNT(*) n FROM kv WHERE key LIKE ?", [`exec:${body.run_id}:%`])?.n ?? 1);
-  const merged: ExecResult[] = all<{ key: string; value: string }>(
+  const total = Number((await one<{ n: string }>("SELECT COUNT(*) n FROM kv WHERE key LIKE ?", [`exec:${body.run_id}:%`]))?.n ?? 1);
+  const merged: ExecResult[] = (await all<{ key: string; value: string }>(
     "SELECT key, value FROM kv WHERE key LIKE ?", [`exec:${body.run_id}:%`],
-  ).flatMap((r) => J.parse<ExecResult[]>(r.value, []));
+  )).flatMap((r) => J.parse<ExecResult[]>(r.value, []));
 
   const expected = Number(
     (J.parse<Array<{ total: number }>>(kvGet(`shards:${body.run_id}`), [])[0]?.total ?? total),
@@ -78,7 +78,7 @@ export async function GET(req: Request) {
   const generated = J.parse<Array<{ conceptId: string; file: string; title: string; layer: string; tags: string[]; covers: string[]; priority: string; code: string }>>(
     kvGet(`generated:${runId}`), []);
   const shards = J.parse<Array<{ index: number; total: number; testIds: string[]; estimatedMs: number }>>(kvGet(`shards:${runId}`), []);
-  const env = one<{ base_url: string; api_base_url: string; name: string }>(
+  const env = await one<{ base_url: string; api_base_url: string; name: string }>(
     `SELECT e.base_url, e.api_base_url, e.name FROM environments e JOIN runs r ON r.environment_id = e.id WHERE r.id = ?`, [runId]);
   if (!generated.length || !shards.length) return problem(409, "Run belum sampai tahap EXECUTING");
 

@@ -1,0 +1,331 @@
+// Veriflow Prisma Schema
+// Converted from src/lib/schema.sql
+// Uses TEXT for UUIDs, JSON stored as TEXT, timestamps as ISO-8601 TEXT
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // Neon / Vercel Postgres / Turso
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  plan      String   @default("free")
+  createdAt DateTime @default(now())
+  projects  Project[]
+
+  @@map("organizations")
+}
+
+model Project {
+  id             String       @id @default(cuid())
+  orgId          String
+  organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name           String
+  repoProvider   String       @default("github")
+  repoUrl        String
+  defaultBranch  String       @default("main")
+  subfolder      String?
+  mode           String       @default("FULL_AUTO")
+  scaffoldRoot   String       @default("autoqa")
+  settings       String       @default("{}") // JSON
+  detected       String?      // JSON
+  createdAt      DateTime     @default(now())
+  environments   Environment[]
+  recipients     Recipient[]
+  runs           Run[]
+  testStats      TestStat[]
+
+  @@index([orgId])
+  @@map("projects")
+}
+
+model Environment {
+  id              String    @id @default(cuid())
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  baseUrl         String
+  apiBaseUrl      String    @default("")
+  authStrategy    String    @default("none")
+  readOnly        Boolean   @default(false)
+  egressAllowlist String?
+  secretRef       String?
+  runs            Run[]
+
+  @@index([projectId])
+  @@map("environments")
+}
+
+model Recipient {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email         String
+  kind          String   @default("to") // to, cc, bcc
+  locale        String   @default("id")
+  verifiedAt    DateTime?
+  unsubscribedAt DateTime?
+
+  @@map("recipients")
+}
+
+model Run {
+  id              String     @id @default(cuid())
+  projectId       String
+  project         Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentId   String?
+  environment     Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  trigger         String     @default("manual")
+  commitSha       String     @default("")
+  branch          String     @default("main")
+  mode            String     @default("FULL_AUTO")
+  status          String
+  idempotencyKey  String     @unique
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  summary         String?    // JSON
+  cost            String?    // JSON
+  reportUrl       String?
+  error           String?
+  createdAt       DateTime   @default(now())
+  steps           RunStep[]
+  logs            RunLog[]
+  testResults     TestResult[]
+  emailMessages   EmailMessage[]
+  reportLinks     ReportLink[]
+  archSnapshots   ArchSnapshot[]
+  diagrams        Diagram[]
+  nodeCoverage    NodeCoverage[]
+  devopsFindings  DevOpsFinding[]
+  aiCalls         AiCall[]
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@map("runs")
+}
+
+model RunStep {
+  id          String   @id @default(cuid())
+  runId       String
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  name        String
+  status      String   @default("pending")
+  attempt     Int      @default(0)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  detail      String?
+  seq         Int      @default(0)
+
+  @@index([runId, seq])
+  @@map("run_steps")
+}
+
+model RunLog {
+  id        Int      @id @default(autoincrement())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  step      String
+  level     String   @default("info")
+  message   String
+  ts        DateTime @default(now())
+
+  @@index([runId])
+  @@map("run_logs")
+}
+
+model TestResult {
+  id              String   @id @default(cuid())
+  runId           String
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  projectId       String
+  file            String
+  title           String
+  layer           String   @default("ui")
+  tags            String   @default("[]") // JSON
+  status          String
+  durationMs      Int      @default(0)
+  retries         Int      @default(0)
+  errorMessage    String?
+  errorCategory   String?
+  promptVersion   String?
+  model           String?
+  quarantined     Boolean  @default(false)
+  covers          String?  // JSON
+  origin          String   @default("ai")
+
+  @@index([runId, status])
+  @@index([projectId, status])
+  @@map("test_results")
+}
+
+model TestStat {
+  id                String   @id @default(cuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  file              String
+  title             String
+  runs              Int      @default(0)
+  avgDurationMs     Int      @default(0)
+  flakyScore        Float    @default(0)
+  consecutiveGreen  Int      @default(0)
+  lastStatus        String   @default("passed")
+
+  @@unique([projectId, file, title])
+  @@map("test_stats")
+}
+
+model EmailMessage {
+  id              String   @id @default(cuid())
+  runId           String?
+  run             Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  kind            String
+  toEmail         String
+  subject         String
+  status          String   @default("queued")
+  attempts        Int      @default(0)
+  bodyHtml        String?
+  bodyText        String?
+  idempotencyKey  String   @unique
+  createdAt       DateTime @default(now())
+  sentAt          DateTime?
+
+  @@index([runId])
+  @@map("email_messages")
+}
+
+model ReportLink {
+  id            String   @id @default(cuid())
+  runId         String
+  run           Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  passwordHash  String?
+  expiresAt     DateTime
+  revokedAt     DateTime?
+
+  @@map("report_links")
+}
+
+model ArchSnapshot {
+  id                String   @id @default(cuid())
+  projectId         String
+  runId             String?
+  run               Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  commitSha         String
+  model             String   // JSON
+  nodeCount         Int      @default(0)
+  edgeCount         Int      @default(0)
+  extractorStatus   String   @default("[]") // JSON
+  createdAt         DateTime @default(now())
+  diagrams          Diagram[]
+  findings          ArchFinding[]
+
+  @@index([runId])
+  @@map("arch_snapshots")
+}
+
+model Diagram {
+  id            String       @id @default(cuid())
+  snapshotId    String
+  snapshot      ArchSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  runId         String
+  run           Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind          String
+  title         String
+  audience      String       @default("internal")
+  syntax        String       @default("mermaid")
+  source        String
+  nodeCount     Int          @default(0)
+  truncated     Boolean      @default(false)
+  aiSummary     String?
+  status        String       @default("ok")
+  inEmail       Boolean      @default(false)
+  altText       String?
+
+  @@index([runId])
+  @@map("diagrams")
+}
+
+model NodeCoverage {
+  runId       String
+  nodeId      String
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind        String
+  testsTotal  Int      @default(0)
+  passed      Int      @default(0)
+  failed      Int      @default(0)
+  flaky       Int      @default(0)
+  state       String   @default("untested")
+
+  @@id([runId, nodeId])
+  @@map("node_coverage")
+}
+
+model ArchFinding {
+  id        String       @id @default(cuid())
+  snapshotId String
+  snapshot  ArchSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  code      String
+  severity  String
+  title     String
+  detail    String       @default("")
+  nodes     String       @default("[]") // JSON
+  evidence  String       @default("[]") // JSON
+
+  @@map("arch_findings")
+}
+
+model DevOpsFinding {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  tool      String
+  severity  String
+  rule      String
+  location  String
+  message   String
+  fixHint   String?
+
+  @@map("devops_findings")
+}
+
+model AiCall {
+  id              String   @id @default(cuid())
+  runId           String
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  step            String
+  promptName      String
+  promptVersion   String
+  model           String
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  costUsd         Float    @default(0)
+  latencyMs       Int      @default(0)
+
+  @@index([runId])
+  @@map("ai_calls")
+}
+
+model PromptVersion {
+  id           String   @id @default(cuid())
+  name         String
+  version      String
+  contentHash  String
+  path         String
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+
+  @@unique([name, version])
+  @@map("prompt_versions")
+}
+
+model Kv {
+  key        String   @id
+  value      String
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@map("kv")
+}

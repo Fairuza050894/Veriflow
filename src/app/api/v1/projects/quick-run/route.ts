@@ -35,11 +35,11 @@ export async function POST(req: Request) {
     return problem(422, "branch tidak valid (hanya alfanumerik, -, _, ., /, max 100 karakter)");
   }
 
-  const orgId = one<{ id: string }>("SELECT id FROM organizations LIMIT 1")?.id;
+  const orgId = (await one<{ id: string }>("SELECT id FROM organizations LIMIT 1"))?.id;
   if (!orgId) return problem(500, "Organisasi belum ada (jalankan seed)");
 
   const name = repoNameFromUrl(body.repo_url);
-  let project = one<{ id: string }>("SELECT id FROM projects WHERE repo_url = ? AND org_id = ?", [body.repo_url, orgId]);
+  let project = await one<{ id: string }>("SELECT id FROM projects WHERE repo_url = ? AND org_id = ?", [body.repo_url, orgId]);
 
   if (!project) {
     const id = uid("prj_");
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
 
 export async function GET() {
   ensureSeeded();
-  const rows = all<Record<string, unknown>>(
+  const rows = await all<Record<string, unknown>>(
     "SELECT id, name, repo_url, mode, default_branch, created_at FROM projects ORDER BY created_at DESC");
   return NextResponse.json({ projects: rows });
 }

@@ -13,13 +13,13 @@ export default async function TestsPage({ searchParams }: { searchParams: Promis
   if (sp.run) { where.push("run_id = ?"); args.push(sp.run); }
   if (sp.status) { where.push("status = ?"); args.push(sp.status); }
 
-  const rows = all<Record<string, any>>(
+  const rows = await all<Record<string, any>>(
     `SELECT tr.*, p.name project_name FROM test_results tr JOIN projects p ON p.id = tr.project_id
      WHERE ${where.join(" AND ")} ORDER BY tr.run_id, tr.duration_ms DESC LIMIT 300`, args);
 
-  const counts = all<{ status: string; n: number }>(
+  const counts = await all<{ status: string; n: number }>(
     "SELECT status, COUNT(*) n FROM test_results GROUP BY status");
-  const quarantined = all<{ n: string }>("SELECT COUNT(*) n FROM test_results WHERE quarantined = 1")[0]?.n ?? "0";
+  const quarantined = (await all<{ n: string }>("SELECT COUNT(*) n FROM test_results WHERE quarantined = 1"))[0]?.n ?? "0";
 
   const parsed = rows.map<Record<string, any>>((r) => ({ ...r, tags: JSON.parse(String(r.tags ?? "[]")) as string[] }));
 
@@ -101,7 +101,7 @@ export default async function TestsPage({ searchParams }: { searchParams: Promis
       <Card>
         <CardHead title="Run terbaru dengan hasil" sub="Navigasi cepat" />
         <div className="flex flex-wrap gap-2 px-5 pb-5">
-          {all<{ id: string; created_at: string }>("SELECT id, created_at FROM runs WHERE summary IS NOT NULL ORDER BY created_at DESC LIMIT 10")
+          {(await all<{ id: string; created_at: string }>("SELECT id, created_at FROM runs WHERE summary IS NOT NULL ORDER BY created_at DESC LIMIT 10"))
             .map((r) => (
               <Link key={r.id} href={`/tests?run=${r.id}`} className="chip text-slate-400 hover:border-dispatch hover:text-dispatch">
                 #{r.id.slice(-6)} · {fmtDate(r.created_at, "id-ID")}

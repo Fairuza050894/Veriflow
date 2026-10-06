@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/v1/projects */
 export async function GET() {
   ensureSeeded();
-  const rows = all<Record<string, unknown>>(
+  const rows = await all<Record<string, unknown>>(
     "SELECT id, org_id, name, repo_provider, repo_url, default_branch, subfolder, mode, scaffold_root, settings, detected, created_at FROM projects ORDER BY created_at DESC");
   return NextResponse.json({
     projects: rows.map((p) => ({

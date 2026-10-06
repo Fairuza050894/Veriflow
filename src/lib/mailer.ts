@@ -24,7 +24,7 @@ export const maskSecrets = (s: string) =>
  */
 export async function sendEmail(p: EmailPayload): Promise<{ sent: boolean; id: string; detail: string }> {
   const idem = `${p.runId}:${p.kind}:${p.to.toLowerCase()}`;
-  const existing = one<{ id: string; status: string }>("SELECT id, status FROM email_messages WHERE idempotency_key = ?", [idem]);
+  const existing = await one<{ id: string; status: string }>("SELECT id, status FROM email_messages WHERE idempotency_key = ?", [idem]);
   if (existing) return { sent: true, id: existing.id, detail: `idempotent: sudah ada (${existing.status})` };
 
   const id = uid("eml_");
@@ -68,8 +68,8 @@ export async function sendEmail(p: EmailPayload): Promise<{ sent: boolean; id: s
   return { sent: status === "sent", id, detail };
 }
 
-export function emailStats() {
-  const rows = all<{ status: string; n: number }>("SELECT status, COUNT(*) n FROM email_messages GROUP BY status");
+export async function emailStats() {
+  const rows = await all<{ status: string; n: number }>("SELECT status, COUNT(*) n FROM email_messages GROUP BY status");
   const out: Record<string, number> = {};
   for (const r of rows) out[r.status] = r.n;
   return out;

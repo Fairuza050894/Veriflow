@@ -1,36 +1,36 @@
 import { all, one, run as dbRun, J, tx, uid, nowIso, getDb, kvGet } from "./db";
 import type { RunSummary } from "./types";
 
-export function ensureSeeded() {
+export async function ensureSeeded() {
   if (process.env.VERIFLOW_SEED === "false") return;
   getDb();
-  const n = one<{ n: number }>("SELECT COUNT(*) n FROM organizations");
+  const n = await one<{ n: number }>("SELECT COUNT(*) n FROM organizations");
   if ((n?.n ?? 0) > 0) return;
-  seedDemo();
+  await seedDemo();
 }
 
 /** Data demo supaya dashboard langsung hidup pada install baru. */
-export function seedDemo() {
+export async function seedDemo() {
   const orgId = uid("org_");
   const projectId = uid("prj_");
   const stagingId = uid("env_");
-  tx(() => {
-    dbRun("INSERT INTO organizations(id, name, plan, created_at) VALUES(?,?,?,?)", [orgId, "Logistics Group", "scale", nowIso()]);
-    dbRun(
+  await tx(async () => {
+    await dbRun("INSERT INTO organizations(id, name, plan, created_at) VALUES(?,?,?,?)", [orgId, "Logistics Group", "scale", nowIso()]);
+    await dbRun(
       `INSERT INTO projects(id, org_id, name, repo_provider, repo_url, default_branch, mode, scaffold_root, settings, detected, created_at)
        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
       [projectId, orgId, "LogiTrack Web", "github", "https://github.com/logistics-id/logitrack-web", "main", "FULL_AUTO", "autoqa",
         JSON.stringify({ max_tests_per_run: 60, browsers: ["chromium"], report_lang: "auto" }), null, nowIso()],
     );
-    dbRun("INSERT INTO environments(id, project_id, name, base_url, api_base_url, auth_strategy, read_only) VALUES(?,?,?,?,?,?,?)",
+    await dbRun("INSERT INTO environments(id, project_id, name, base_url, api_base_url, auth_strategy, read_only) VALUES(?,?,?,?,?,?,?)",
       [stagingId, projectId, "staging", "https://staging.logitrack.io", "https://staging.logitrack.io", "bearer", 0]);
     for (const [email, locale] of [["qa@logistics-id.com", "id"], ["ops@logitrack.io", "en"]] as const) {
-      dbRun("INSERT INTO recipients(id, project_id, email, kind, locale, verified_at) VALUES(?,?,?,?,?,?)",
+      await dbRun("INSERT INTO recipients(id, project_id, email, kind, locale, verified_at) VALUES(?,?,?,?,?,?)",
         [uid("rcp_"), projectId, email, "to", locale, nowIso()]);
     }
     // riwayat 7 run supaya tren & sparkline tidak kosong
-    const n = one<{ id: string }>("SELECT id FROM projects WHERE id = ?", [projectId]);
-    if (n) seedHistory(projectId, stagingId);
+    const n = await one<{ id: string }>("SELECT id FROM projects WHERE id = ?", [projectId]);
+    if (n) await seedHistory(projectId, stagingId);
   });
 }
 
@@ -130,15 +130,15 @@ export type RecentRun = {
   finished_at: string | null; summary: RunSummary | null; cost: { cost_usd?: number } | null; report_url: string | null;
 };
 
-export function overview(orgId?: string): Overview {
+export async function overview(orgId?: string): Promise<Overview> {
   const scope = orgId ? "AND p.org_id = ?" : "";
   const args: Array<string> = orgId ? [orgId] : [];
-  const projects = one<{ n: number }>(`SELECT COUNT(*) n FROM projects p WHERE 1=1 ${scope}`, args)?.n ?? 0;
+  const projects = (await one<{ n: number }>(`SELECT COUNT(*) n FROM projects p WHERE 1=1 ${scope}`, args))?.n ?? 0;
   const since = new Date(Date.now() - 864e5).toISOString();
-  const runs24h = one<{ n: number }>(`SELECT COUNT(*) n FROM runs WHERE created_at > ? ${scope ? "AND project_id IN (SELECT id FROM projects WHERE org_id=?)" : ""}`,
-    orgId ? [since, orgId] : [since])?.n ?? 0;
+  const runs24h = (await one<{ n: number }>(`SELECT COUNT(*) n FROM runs WHERE created_at > ? ${scope ? "AND project_id IN (SELECT id FROM projects WHERE org_id=?)" : ""}`,
+    orgId ? [since, orgId] : [since]))?.n ?? 0;
 
-  const recent = all<{ d: string; pass_rate: number }>(
+  const recent = await all<{ d: string; pass_rate: number }>(
     `SELECT substr(created_at,1,10) d, JSON_EXTRACT(summary,'$.pass_rate') pass_rate
      FROM runs WHERE summary IS NOT NULL AND created_at > ? ORDER BY created_at DESC LIMIT 60`, [new Date(Date.now() - 14 * 864e5).toISOString()]);
   const byDay = new Map<string, number[]>();
@@ -147,48 +147,49 @@ export function overview(orgId?: string): Overview {
     .map(([day, arr]) => ({ day, rate: arr.reduce((x, y) => x + y, 0) / arr.length, runs: arr.length }));
   const passRate7d = passTrend.slice(-7);
 
-  const durations = all<{ ms: number }>(
+  const durations = (await all<{ ms: number }>(
     `SELECT CAST(json_extract(summary,'$.duration_ms') AS INTEGER) ms FROM runs WHERE summary IS NOT NULL AND created_at > ? ORDER BY created_at DESC LIMIT 50`,
-    [new Date(Date.now() - 14 * 864e5).toISOString()]).map((r) => r.ms).filter((n) => n > 0).sort((a, b) => a - b);
+    [new Date(Date.now() - 14 * 864e5).toISOString()])).map((r) => r.ms).filter((n) => n > 0).sort((a, b) => a - b);
   const pct = (arr: number[], p: number) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : 0;
 
-  const categories = all<{ key: string; n: number }>(
+  const categories = await all<{ key: string; n: number }>(
     `SELECT error_category key, COUNT(*) n FROM test_results WHERE error_category IS NOT NULL AND run_id IN
        (SELECT id FROM runs WHERE created_at > ?) GROUP BY error_category ORDER BY n DESC`,
     [new Date(Date.now() - 14 * 864e5).toISOString()]);
 
-  const slowest = all<{ title: string; ms: number }>(
-    `SELECT title, AVG(duration_ms) ms FROM test_results GROUP BY title ORDER BY ms DESC LIMIT 8`)
+  const slowest = (await all<{ title: string; ms: number }>(
+    `SELECT title, AVG(duration_ms) ms FROM test_results GROUP BY title ORDER BY ms DESC LIMIT 8`))
     .map((r) => ({ title: r.title, ms: r.ms ?? 0 }));
-  const flakyTop = all<{ title: string; score: number }>(
-    `SELECT title, AVG(flaky_score) score FROM test_stats WHERE flaky_score > 0 ORDER BY score DESC LIMIT 8`)
+  const flakyTop = (await all<{ title: string; score: number }>(
+    `SELECT title, AVG(flaky_score) score FROM test_stats WHERE flaky_score > 0 ORDER BY score DESC LIMIT 8`))
     .map((r) => ({ title: r.title, score: r.score ?? 0 }));
 
-  const recentRuns = allRunRows("ORDER BY r.created_at DESC LIMIT 8", args);
-  const attentionRuns = allRunRows(
+  const recentRuns = await allRunRows("ORDER BY r.created_at DESC LIMIT 8", args);
+  const attentionRuns = await allRunRows(
     `WHERE r.status IN ('FAILED','WAITING_APPROVAL','TIMED_OUT') ${orgId ? "AND p.org_id = ?" : ""} ORDER BY r.created_at DESC LIMIT 8`,
     orgId ? [orgId] : []);
 
-  return {
+  const result: Overview = {
     projects,
     runs24h,
     passRate7d: passRate7d.length ? passRate7d.reduce((a, b) => a + b.rate, 0) / passRate7d.length : 0,
     flakyActive: flakyTop.length,
-    costMonth: one<{ n: number }>("SELECT COALESCE(SUM(CAST(json_extract(cost,'$.cost_usd') AS REAL)),0) n FROM runs WHERE created_at > ?",
-      [new Date(Date.now() - 30 * 864e5).toISOString()])?.n ?? 0,
-    emailsSent: one<{ n: number }>("SELECT COUNT(*) n FROM email_messages WHERE status='sent' AND created_at > ?",
-      [new Date(Date.now() - 30 * 864e5).toISOString()])?.n ?? 0,
+    costMonth: (await one<{ n: number }>("SELECT COALESCE(SUM(CAST(json_extract(cost,'$.cost_usd') AS REAL)),0) n FROM runs WHERE created_at > ?",
+      [new Date(Date.now() - 30 * 864e5).toISOString()]))?.n ?? 0,
+    emailsSent: (await one<{ n: number }>("SELECT COUNT(*) n FROM email_messages WHERE status='sent' AND created_at > ?",
+      [new Date(Date.now() - 30 * 864e5).toISOString()]))?.n ?? 0,
     durationP95: pct(durations, 0.95),
     passTrend: passTrend.slice(-14),
     runDurations: [{ label: "p50", p50: pct(durations, 0.5), p95: 0 }, { label: "p95", p50: 0, p95: pct(durations, 0.95) }],
     categories,
     slowest,
     flakyTop,
-    recentRuns,
-    attentionRuns,
-    queueDepth: one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE status IN ('CREATED','QUEUED','CLONING','ANALYZING','SCAFFOLDING','PLANNING','GENERATING','VALIDATING','HEALING','PROVISIONING','EXECUTING','ANALYZING_RESULTS','REPORTING','NOTIFYING','COMMITTING')")?.n ?? 0,
-    runnerActive: one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE status='EXECUTING'")?.n ?? 0,
+    recentRuns: recentRuns as RecentRun[],
+    attentionRuns: attentionRuns as RecentRun[],
+    queueDepth: (await one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE status IN ('CREATED','QUEUED','CLONING','ANALYZING','SCAFFOLDING','PLANNING','GENERATING','VALIDATING','HEALING','PROVISIONING','EXECUTING','ANALYZING_RESULTS','REPORTING','NOTIFYING','COMMITTING')"))?.n ?? 0,
+    runnerActive: (await one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE status='EXECUTING'"))?.n ?? 0,
   };
+  return result;
 }
 
 /**
@@ -196,32 +197,33 @@ export function overview(orgId?: string): Overview {
  *  - "WHERE a = b ORDER BY ..."   → dipakai apa adanya
  *  - "ORDER BY ... / LIMIT ..."   → tanpa klausa WHERE
  */
-export function allRunRows(suffix = "", args: Array<string> = []): RecentRun[] {
+export async function allRunRows(suffix = "", args: Array<string> = []): Promise<RecentRun[]> {
   const body = suffix.replace(/^WHERE\s+/i, "").trim();
   const clause = !body || /^(ORDER|LIMIT|GROUP)\b/i.test(body) ? suffix : `WHERE ${body}`;
-  return all<RecentRun>(
+  const rows = await all<RecentRun>(
     `SELECT r.id, r.project_id, p.name project_name, e.name env_name, r.status, r.commit_sha, r.branch, r.trigger,
             r.created_at, r.finished_at, r.summary, r.cost, r.report_url
      FROM runs r JOIN projects p ON p.id = r.project_id LEFT JOIN environments e ON e.id = r.environment_id
      ${clause}`, args,
-  ).map((r) => ({ ...r, summary: J.parse<RunSummary | null>(r.summary, null), cost: J.parse(r.cost, null) }));
+  );
+  return rows.map((r) => ({ ...r, summary: J.parse<RunSummary | null>(r.summary, null), cost: J.parse(r.cost, null) }));
 }
 
-export function projectById(id: string): (Record<string, any> & { runs: RecentRun[] }) | null {
-  const p = one<Record<string, any>>("SELECT * FROM projects WHERE id = ?", [id]);
+export async function projectById(id: string): Promise<(Record<string, any> & { runs: RecentRun[] }) | null> {
+  const p = await one<Record<string, any>>("SELECT * FROM projects WHERE id = ?", [id]);
   if (!p) return null;
   return {
     ...(p as Record<string, any>),
     settings: J.parse<Record<string, unknown>>(p.settings, {}),
     detected: J.parse<Record<string, unknown> | null>(p.detected, null),
-    environments: all("SELECT * FROM environments WHERE project_id = ?", [id]),
-    recipients: all("SELECT * FROM recipients WHERE project_id = ?", [id]),
-    runs: allRunRows("WHERE r.project_id = ? ORDER BY r.created_at DESC LIMIT 20", [id]),
+    environments: await all("SELECT * FROM environments WHERE project_id = ?", [id]),
+    recipients: await all("SELECT * FROM recipients WHERE project_id = ?", [id]),
+    runs: await allRunRows("WHERE r.project_id = ? ORDER BY r.created_at DESC LIMIT 20", [id]),
   };
 }
 
-export function runDetail(id: string): (Record<string, any> & { summary: RunSummary | null }) | null {
-  const run = one<Record<string, any>>(
+export async function runDetail(id: string): Promise<(Record<string, any> & { summary: RunSummary | null }) | null> {
+  const run = await one<Record<string, any>>(
     `SELECT r.*, p.name project_name, e.name env_name, e.base_url FROM runs r
      JOIN projects p ON p.id = r.project_id LEFT JOIN environments e ON e.id = r.environment_id WHERE r.id = ?`, [id]);
   if (!run) return null;
@@ -229,16 +231,16 @@ export function runDetail(id: string): (Record<string, any> & { summary: RunSumm
     ...run,
     summary: J.parse<RunSummary | null>(run.summary, null),
     cost: J.parse<Record<string, number> | null>(run.cost, null),
-    steps: all("SELECT * FROM run_steps WHERE run_id = ? ORDER BY seq", [id]),
-    tests: all<Record<string, any>>("SELECT * FROM test_results WHERE run_id = ? ORDER BY status DESC, duration_ms DESC", [id])
+    steps: await all("SELECT * FROM run_steps WHERE run_id = ? ORDER BY seq", [id]),
+    tests: (await all<Record<string, any>>("SELECT * FROM test_results WHERE run_id = ? ORDER BY status DESC, duration_ms DESC", [id]))
       .map<Record<string, any>>((r) => ({ ...r, tags: J.parse<string[]>(r.tags, []), covers: J.parse<string[]>(r.covers, []) })),
-    diagrams: all("SELECT * FROM diagrams WHERE run_id = ? ORDER BY in_email DESC, kind", [id]),
+    diagrams: await all("SELECT * FROM diagrams WHERE run_id = ? ORDER BY in_email DESC, kind", [id]),
     shards: J.parse<Array<{ index: number; total: number; testIds: string[]; estimatedMs: number }>>(kvGet(`shards:${id}`), []),
     pr: J.parse<{ number: number; url: string; title: string } | null>(kvGet(`pr:${id}`), null),
-    logs: all("SELECT * FROM run_logs WHERE run_id = ? ORDER BY id DESC LIMIT 300", [id]).reverse(),
-    findings: all("SELECT * FROM arch_findings WHERE snapshot_id = (SELECT id FROM arch_snapshots WHERE run_id = ?) LIMIT 12", [id]),
-    devops: all("SELECT * FROM devops_findings WHERE run_id = ? LIMIT 12", [id]),
-    coverage: all("SELECT * FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC, node_id LIMIT 40", [id]),
-    snapshot: one("SELECT id, node_count, edge_count, extractor_status, created_at FROM arch_snapshots WHERE run_id = ?", [id]),
+    logs: (await all("SELECT * FROM run_logs WHERE run_id = ? ORDER BY id DESC LIMIT 300", [id])).reverse(),
+    findings: await all("SELECT * FROM arch_findings WHERE snapshot_id = (SELECT id FROM arch_snapshots WHERE run_id = ?) LIMIT 12", [id]),
+    devops: await all("SELECT * FROM devops_findings WHERE run_id = ? LIMIT 12", [id]),
+    coverage: await all("SELECT * FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC, node_id LIMIT 40", [id]),
+    snapshot: await one("SELECT id, node_count, edge_count, extractor_status, created_at FROM arch_snapshots WHERE run_id = ?", [id]),
   };
 }

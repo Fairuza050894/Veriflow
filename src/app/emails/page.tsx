@@ -10,12 +10,12 @@ export const dynamic = "force-dynamic";
 /** Email Center: log pengiriman, preview, resend (FR-DSH-08). */
 export default async function EmailsPage({ searchParams }: { searchParams: Promise<{ id?: string }> }) {
   const sp = await searchParams;
-  const rows = all<Record<string, any>>(
+  const rows = await all<Record<string, any>>(
     `SELECT e.*, r.project_id FROM email_messages e LEFT JOIN runs r ON r.id = e.run_id
      ORDER BY e.created_at DESC LIMIT 100`);
-  const stats = emailStats();
-  const selected = sp.id ? one<Record<string, any>>("SELECT * FROM email_messages WHERE id = ?", [sp.id]) : rows[0];
-  const bounced = one<{ n: number }>("SELECT COUNT(*) n FROM email_messages WHERE status='bounced'")?.n ?? 0;
+  const stats = await emailStats();
+  const selected = sp.id ? await one<Record<string, any>>("SELECT * FROM email_messages WHERE id = ?", [sp.id]) : rows[0];
+  const bounced = (await one<{ n: number }>("SELECT COUNT(*) n FROM email_messages WHERE status='bounced'"))?.n ?? 0;
 
   return (
     <div className="space-y-4">

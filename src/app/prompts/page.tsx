@@ -9,10 +9,10 @@ export const dynamic = "force-dynamic";
 /** Prompt Registry: versi, isi, dan pemakaian (FR-DSH-07). */
 export default async function PromptsPage() {
   const prompts = await readPrompts();
-  const usage = all<{ prompt_name: string; n: number; tokens: number; cost: number }>(
+  const usage = await all<{ prompt_name: string; n: number; tokens: number; cost: number }>(
     `SELECT prompt_name, COUNT(*) n, SUM(input_tokens + output_tokens) tokens, SUM(cost_usd) cost
      FROM ai_calls GROUP BY prompt_name ORDER BY n DESC`);
-  const calls = all<Record<string, any>>(
+  const calls = await all<Record<string, any>>(
     "SELECT prompt_name, prompt_version, model, input_tokens, output_tokens, cost_usd, latency_ms FROM ai_calls ORDER BY rowid DESC LIMIT 20");
 
   return (

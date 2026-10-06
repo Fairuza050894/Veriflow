@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/v1/runs/{id}/tests — Test Explorer dengan filter (FR-DSH-04). */
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  if (!one<{ id: string }>("SELECT id FROM runs WHERE id = ?", [id])) return notFound("Run tidak ditemukan");
+  if (!(await one<{ id: string }>("SELECT id FROM runs WHERE id = ?", [id]))) return notFound("Run tidak ditemukan");
 
   const url = new URL(req.url);
   const status = url.searchParams.get("status");
@@ -25,7 +25,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (category) { where.push("error_category = ?"); args.push(category); }
   if (minMs) { where.push("duration_ms >= ?"); args.push(minMs); }
 
-  let rows = all<Record<string, any>>(
+  let rows = await all<Record<string, any>>(
     `SELECT * FROM test_results WHERE ${where.join(" AND ")} ORDER BY duration_ms DESC`, args);
   if (tag) rows = rows.filter((r) => JSON.parse(String(r.tags ?? "[]")).includes(tag));
 

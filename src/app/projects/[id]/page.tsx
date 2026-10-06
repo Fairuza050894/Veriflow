@@ -12,20 +12,20 @@ export const dynamic = "force-dynamic";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const p = projectById(id);
+  const p = await projectById(id);
   if (!p) notFound();
 
   const latest = p.runs[0];
-  const latestRun = latest ? one<Record<string, any>>(
+  const latestRun = latest ? await one<Record<string, any>>(
     "SELECT id, summary, cost, status FROM runs WHERE id = ?", [latest.id]) : null;
   const snapshot = latest
-    ? one<{ id: string }>("SELECT id FROM arch_snapshots WHERE run_id = ?", [latest.id])
+    ? await one<{ id: string }>("SELECT id FROM arch_snapshots WHERE run_id = ?", [latest.id])
     : null;
   const diagrams: Array<Record<string, any>> = snapshot
-    ? all("SELECT * FROM diagrams WHERE snapshot_id = ? ORDER BY in_email DESC, kind", [snapshot.id])
+    ? await all("SELECT * FROM diagrams WHERE snapshot_id = ? ORDER BY in_email DESC, kind", [snapshot.id])
     : [];
   const coverage: Array<Record<string, any>> = snapshot
-    ? all("SELECT node_id, kind, tests_total, passed, failed, flaky, state FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC LIMIT 60", [latest?.id ?? ""])
+    ? await all("SELECT node_id, kind, tests_total, passed, failed, flaky, state FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC LIMIT 60", [latest?.id ?? ""])
     : [];
 
   const summary = latestRun ? (JSON.parse(String(latestRun.summary ?? "null")) as RunSummary | null) : null;

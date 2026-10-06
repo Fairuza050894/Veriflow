@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export default async function RunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const r = runDetail(id);
+  const r = await runDetail(id);
   if (!r) notFound();
 
   const summary = r.summary as RunSummary | null;

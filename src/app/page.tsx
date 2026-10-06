@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { fmtPct, fmtDuration, fmtMoney, fmtNum, fmtDate, shortSha } from "@/lib/util";
 import { ConnectRepoButton, RunButton, CancelButton } from "@/components/actions";
 import { one } from "@/lib/db";
+import type { Overview } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,9 @@ const CAT_COLORS: Record<string, string> = {
 
 export default async function OverviewPage() {
   const lang = await getLang();
-  const o = overview();
-  const firstProject = one<{ id: string }>("SELECT id FROM projects ORDER BY created_at LIMIT 1");
-  const activeRuns = allRunRows(
+  const o = await overview();
+  const firstProject = await one<{ id: string }>("SELECT id FROM projects ORDER BY created_at LIMIT 1");
+  const activeRuns = await allRunRows(
     "WHERE r.status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT','COMPLETED_WITH_WARNINGS') ORDER BY r.created_at DESC LIMIT 4");
 
   return (

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 /** Viewer arsitektur global: pilih snapshot per run, bandingkan dua run (FR-DGM-19). */
 export default async function ArchitecturePage({ searchParams }: { searchParams: Promise<{ run?: string; compare?: string }> }) {
   const sp = await searchParams;
-  const snaps = all<{ id: string; run_id: string; commit_sha: string; node_count: number; edge_count: number; created_at: string; extractor_status: string }>(
+  const snaps = await all<{ id: string; run_id: string; commit_sha: string; node_count: number; edge_count: number; created_at: string; extractor_status: string }>(
     "SELECT id, run_id, commit_sha, node_count, edge_count, created_at, extractor_status FROM arch_snapshots ORDER BY created_at DESC LIMIT 30");
 
   if (!snaps.length) {
@@ -26,11 +26,11 @@ export default async function ArchitecturePage({ searchParams }: { searchParams:
   }
 
   const chosen = sp.run ? snaps.find((s) => s.run_id === sp.run) ?? snaps[0] : snaps[0];
-  const diagrams = all<Record<string, any>>(
+  const diagrams = await all<Record<string, any>>(
     "SELECT id, kind, title, source, status, audience, in_email, node_count, alt_text FROM diagrams WHERE snapshot_id = ? ORDER BY in_email DESC, kind", [chosen.id]);
-  const coverage = all<Record<string, any>>(
+  const coverage = await all<Record<string, any>>(
     "SELECT node_id, kind, tests_total, passed, failed, flaky, state FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC LIMIT 80", [chosen.run_id]);
-  const findings = all<Record<string, any>>("SELECT code, severity, title, detail, evidence FROM arch_findings WHERE snapshot_id = ?", [chosen.id]);
+  const findings = await all<Record<string, any>>("SELECT code, severity, title, detail, evidence FROM arch_findings WHERE snapshot_id = ?", [chosen.id]);
   const extractors = JSON.parse(chosen.extractor_status) as Array<{ name: string; version: string; status: string; reason?: string }>;
   const diff = sp.compare ? snapshotDiff(sp.compare, chosen.run_id) : null;
 

@@ -7,13 +7,24 @@ import { RunButton, ConnectRepoButton } from "@/components/actions";
 import { fmtPct, fmtDate, fmtDuration, shortSha } from "@/lib/util";
 import { getLang } from "@/lib/lang-server";
 import { t } from "@/lib/i18n";
+import type { RecentRun } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
   const lang = await getLang();
-  const projects = all<Record<string, any>>("SELECT * FROM projects ORDER BY created_at DESC");
-  const runs = allRunRows();
+  const projects = await all<Record<string, any>>("SELECT * FROM projects ORDER BY created_at DESC");
+  const runs: RecentRun[] = await allRunRows();
+
+  // Pre-fetch envs and recipients for all projects
+  const envsMap = new Map<string, any[]>();
+  const recipsMap = new Map<string, any[]>();
+  for (const p of projects) {
+    const envs = await all<Record<string, any>>("SELECT * FROM environments WHERE project_id = ? ORDER BY id DESC", [p.id]);
+    const recips = await all<{ email: string }>("SELECT email FROM recipients WHERE project_id = ? ORDER BY verified_at DESC", [p.id]);
+    envsMap.set(p.id, envs);
+    recipsMap.set(p.id, recips);
+  }
 
   if (!projects.length) {
     return (
@@ -42,8 +53,8 @@ export default async function ProjectsPage() {
           const pr = runs.filter((r) => r.project_id === p.id);
           const rates = pr.map((r) => r.summary?.pass_rate ?? 0).filter((n) => n > 0);
           const latest = pr[0];
-          const envs = all<Record<string, any>>("SELECT * FROM environments WHERE project_id = ? ORDER BY id DESC", [p.id]);
-          const recips = all<{ email: string }>("SELECT email FROM recipients WHERE project_id = ? ORDER BY verified_at DESC", [p.id]);
+          const envs = envsMap.get(p.id) ?? [];
+          const recips = recipsMap.get(p.id) ?? [];
           return (
             <Card key={p.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3">

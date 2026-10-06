@@ -8,14 +8,14 @@ export const dynamic = "force-dynamic";
 
 /** Settings: konfigurasi adapter, org, retensi, dan status komponen (FR-DSH-09). */
 export default async function SettingsPage() {
-  const org = one<Record<string, any>>("SELECT * FROM organizations LIMIT 1");
-  const projects = all<Record<string, any>>("SELECT id, name, mode, repo_url FROM projects");
+  const org = await one<Record<string, any>>("SELECT * FROM organizations LIMIT 1");
+  const projects = await all<Record<string, any>>("SELECT id, name, mode, repo_url FROM projects");
   const counts = {
-    runs: one<{ n: number }>("SELECT COUNT(*) n FROM runs")?.n ?? 0,
-    logs: one<{ n: number }>("SELECT COUNT(*) n FROM run_logs")?.n ?? 0,
-    tests: one<{ n: number }>("SELECT COUNT(*) n FROM test_results")?.n ?? 0,
-    emails: one<{ n: number }>("SELECT COUNT(*) n FROM email_messages")?.n ?? 0,
-    diagrams: one<{ n: number }>("SELECT COUNT(*) n FROM diagrams")?.n ?? 0,
+    runs: (await one<{ n: number }>("SELECT COUNT(*) n FROM runs"))?.n ?? 0,
+    logs: (await one<{ n: number }>("SELECT COUNT(*) n FROM run_logs"))?.n ?? 0,
+    tests: (await one<{ n: number }>("SELECT COUNT(*) n FROM test_results"))?.n ?? 0,
+    emails: (await one<{ n: number }>("SELECT COUNT(*) n FROM email_messages"))?.n ?? 0,
+    diagrams: (await one<{ n: number }>("SELECT COUNT(*) n FROM diagrams"))?.n ?? 0,
   };
   const prompts = await readPrompts();
   getDb();

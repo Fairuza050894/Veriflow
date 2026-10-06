@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   if (a.length !== b.length || !timingSafeEqual(a, b)) return problem(401, "Signature webhook tidak valid");
 
   const delivery = req.headers.get("x-github-delivery") ?? "";
-  if (delivery && one<{ key: string }>("SELECT key FROM kv WHERE key = ?", [`gh:${delivery}`])) {
+  if (delivery && (await one<{ key: string }>("SELECT key FROM kv WHERE key = ?", [`gh:${delivery}`]))) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
   if (delivery) dbRun("INSERT OR IGNORE INTO kv(key, value, updated_at) VALUES(?,?,?)", [`gh:${delivery}`, "1", nowIso()]);
@@ -39,14 +39,14 @@ export async function POST(req: Request) {
 
   const repoUrl = payload.repository?.clone_url;
   if (!repoUrl) return problem(422, "Payload tidak memuat repository.clone_url");
-  const project = one<{ id: string }>("SELECT id FROM projects WHERE repo_url = ?", [repoUrl]);
+  const project = await one<{ id: string }>("SELECT id FROM projects WHERE repo_url = ?", [repoUrl]);
   if (!project) return problem(404, "Project untuk repository ini belum terhubung");
 
   const branch = (payload.ref ?? "").replace("refs/heads/", "");
   if (event === "pull_request") {
     // pull_request event: use base branch
     const prBranch = payload.pull_request?.base?.ref ?? branch;
-    const env = one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [project.id]);
+    const env = await one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [project.id]);
     if (!env) return problem(422, "Project belum punya environment");
 
     const { runId, duplicate } = await createRun({
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
 
   if (event !== "push") return NextResponse.json({ ok: true, ignored: event });
 
-  const env = one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [project.id]);
+  const env = await one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [project.id]);
   if (!env) return problem(422, "Project belum punya environment");
 
   const { runId, duplicate } = await createRun({
@@ -86,6 +86,6 @@ export async function GET() {
     configured: Boolean(process.env.GITHUB_WEBHOOK_SECRET),
     events: ["push", "pull_request"],
     note: "Verifikasi HMAC SHA-256 header x-hub-signature-256; dedupe via x-github-delivery",
-    projects: all("SELECT id, name, repo_url FROM projects"),
+    projects: await all("SELECT id, name, repo_url FROM projects"),
   });
 }

@@ -14,11 +14,14 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "runner": "node runner/worker.mjs",
-    "db:reset": "rm -rf .data && echo 'db reset'"
+    "db:reset": "rm -rf .data && echo 'db reset'",
+    "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {
+    "@prisma/client": "^5.22.0",
     "mermaid": "^11.4.1",
     "next": "^15.5.27",
+    "prisma": "^5.22.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "zod": "3.25.76"

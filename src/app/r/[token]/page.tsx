@@ -15,9 +15,9 @@ export const dynamic = "force-dynamic";
 export default async function PublicReport({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   // Try token first, then fall back to runId
-  let data = publicReportByToken(token);
+  let data = await publicReportByToken(token);
   if (!data) {
-    data = publicReportByRunId(token);
+    data = await publicReportByRunId(token);
   }
   if (!data) notFound();
 

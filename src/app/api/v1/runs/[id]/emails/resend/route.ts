@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const run = one<Record<string, any>>(
+  const run = await one<Record<string, any>>(
     `SELECT r.*, p.name project_name, e.name env_name FROM runs r
      JOIN projects p ON p.id = r.project_id LEFT JOIN environments e ON e.id = r.environment_id WHERE r.id = ?`, [id]);
   if (!run) return notFound("Run tidak ditemukan");
@@ -23,11 +23,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const summary = J.parse<RunSummary | null>(run.summary, null);
   if (!summary) return problem(409, "Run belum punya hasil untuk dilaporkan");
 
-  const recips = all<{ email: string; locale: string }>(
+  const recips = await all<{ email: string; locale: string }>(
     "SELECT email, locale FROM recipients WHERE project_id = ? AND unsubscribed_at IS NULL", [run.project_id]);
   const targets = recips.length ? recips : [{ email: "qa@example.com", locale: "id" }];
 
-  const diagrams = all<{ kind: string; title: string; alt_text: string | null; in_email: number }>(
+  const diagrams = await all<{ kind: string; title: string; alt_text: string | null; in_email: number }>(
     "SELECT kind, title, alt_text, in_email FROM diagrams WHERE run_id = ? AND in_email = 1", [id]);
 
   // Biarkan pipeline tetap sinkron supaya laporan terisi penuh.

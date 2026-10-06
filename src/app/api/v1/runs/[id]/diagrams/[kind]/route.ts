@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request, ctx: { params: Promise<{ id: string; kind: string }> }) {
   const { id, kind } = await ctx.params;
   const format = new URL(req.url).searchParams.get("format") ?? "src";
-  const row = one<{ id: string; source: string; syntax: string; title: string; alt_text: string | null; status: string }>(
+  const row = await one<{ id: string; source: string; syntax: string; title: string; alt_text: string | null; status: string }>(
     "SELECT id, source, syntax, title, alt_text, status FROM diagrams WHERE run_id = ? AND kind = ?", [id, kind.toUpperCase()]);
   if (!row) return notFound(`Diagram ${kind} tidak tersedia`);
   if (row.status === "skipped") return problem(424, `Diagram ${kind} dilewati: ${row.alt_text ?? "tidak diketahui"}`);

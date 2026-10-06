@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  if (!one<{ id: string }>("SELECT id FROM projects WHERE id = ?", [id])) return notFound("Project tidak ditemukan");
+  if (!(await one<{ id: string }>("SELECT id FROM projects WHERE id = ?", [id]))) return notFound("Project tidak ditemukan");
 
   const body = (await req.json().catch(() => ({}))) as {
     environment?: string; environment_id?: string; mode?: string;
@@ -20,7 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const idem = req.headers.get("idempotency-key") ?? body.idempotency_key;
 
   const envId = body.environment_id ?? body.environment
-    ?? one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [id])?.id;
+    ?? (await one<{ id: string }>("SELECT id FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1", [id]))?.id;
   if (!envId) return problem(422, "Project belum punya environment");
 
   const { runId, duplicate, reportToken } = await createRun({
@@ -43,7 +43,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 /** GET /api/v1/projects/{id}/runs — histori run. */
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const runs = one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE project_id = ?", [id])?.n ?? 0;
+  const runs = (await one<{ n: number }>("SELECT COUNT(*) n FROM runs WHERE project_id = ?", [id]))?.n ?? 0;
   const { allRunRows } = await import("@/lib/queries");
   return NextResponse.json({ total: runs, runs: allRunRows("WHERE r.project_id = ? ORDER BY r.created_at DESC LIMIT 50", [id]) });
 }

@@ -65,14 +65,14 @@ export async function createRun(input: {
   projectId: string; environmentId?: string | null; trigger?: string;
   mode?: string; idempotencyKey?: string; commitSha?: string; branch?: string;
 }): Promise<{ runId: string; duplicate: boolean; reportToken?: string }> {
-  const project = one<Record<string, unknown>>("SELECT * FROM projects WHERE id = ?", [input.projectId]);
+  const project = await one<Record<string, unknown>>("SELECT * FROM projects WHERE id = ?", [input.projectId]);
   if (!project) throw new Error("project tidak ditemukan");
 
   const idem = input.idempotencyKey ?? `${input.projectId}:${input.commitSha ?? "head"}:${input.trigger ?? "manual"}`;
-  const dup = one<{ id: string }>("SELECT id FROM runs WHERE idempotency_key = ?", [idem]);
+  const dup = await one<{ id: string }>("SELECT id FROM runs WHERE idempotency_key = ?", [idem]);
   if (dup) return { runId: dup.id, duplicate: true };
 
-  const env = one<{ id: string; name: string }>(
+  const env = await one<{ id: string; name: string }>(
     input.environmentId
       ? "SELECT id, name FROM environments WHERE id = ?"
       : "SELECT id, name FROM environments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -81,7 +81,7 @@ export async function createRun(input: {
 
   const runId = uid("run_");
   let token: string | undefined;
-  tx(() => {
+  await tx(async () => {
     dbRun(
       `INSERT INTO runs(id, project_id, environment_id, trigger, commit_sha, branch, mode, status, idempotency_key, started_at, created_at)
        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
@@ -103,14 +103,14 @@ export async function createRun(input: {
 }
 
 async function loadCtx(runId: string): Promise<Ctx | null> {
-  const r = one<Record<string, any>>(
+  const r = await one<Record<string, any>>(
     `SELECT r.*, p.name project_name, p.repo_url, e.name env_name, e.base_url
      FROM runs r JOIN projects p ON p.id = r.project_id
      LEFT JOIN environments e ON e.id = r.environment_id WHERE r.id = ?`,
     [runId],
   );
   if (!r) return null;
-  const recips = all<{ email: string; locale: string }>(
+  const recips = await all<{ email: string; locale: string }>(
     "SELECT email, locale FROM recipients WHERE project_id = ? AND unsubscribed_at IS NULL",
     [r.project_id],
   );
@@ -146,7 +146,8 @@ export function advanceRun(runId: string): Promise<{ status: RunStatus }> {
 async function advanceInner(runId: string): Promise<{ status: RunStatus }> {
   const ctx = await loadCtx(runId);
   if (!ctx) return { status: "FAILED" };
-  const run = one<Record<string, any>>("SELECT status, summary FROM runs WHERE id = ?", [runId])!;
+  const run = await one<Record<string, any>>("SELECT status, summary FROM runs WHERE id = ?", [runId]);
+  if (!run) return { status: "FAILED" };
   if (TERMINAL.includes(run.status as RunStatus)) return { status: run.status as RunStatus };
   if (run.status === "WAITING_APPROVAL") return { status: "WAITING_APPROVAL" };
   if (run.status === "CANCELLED") return { status: "CANCELLED" };
@@ -159,8 +160,8 @@ async function advanceInner(runId: string): Promise<{ status: RunStatus }> {
     setStatus(runId, "FAILED", { finished_at: nowIso(), error: { message: (e as Error).message } });
     return { status: "FAILED" };
   }
-  const final = one<{ status: RunStatus }>("SELECT status FROM runs WHERE id = ?", [runId])!;
-  return { status: final.status };
+  const final = await one<{ status: RunStatus }>("SELECT status FROM runs WHERE id = ?", [runId]);
+  return { status: final?.status ?? "FAILED" };
 }
 
 async function sendFailureEmail(ctx: Ctx, reason: string) {
@@ -199,11 +200,11 @@ function stepCtx(runId: string) {
 async function drivePipeline(ctx: Ctx) {
   const { runId } = ctx;
   const s = stepCtx(runId);
-  const st = (n: string) => one<{ status: string }>("SELECT status FROM run_steps WHERE run_id=? AND name=?", [runId, n])?.status;
+  const st = async (n: string) => (await one<{ status: string }>("SELECT status FROM run_steps WHERE run_id=? AND name=?", [runId, n]))?.status;
   const delay = Number(process.env.VERIFLOW_STEP_DELAY_MS ?? 220);
 
   // ── 1. CLONING ──────────────────────────────────────────────────────────
-  if (st("CLONING") === "pending") {
+  if ((await st("CLONING")) === "pending") {
     s.start("CLONING");
     const ws = await cloneRepo({ url: ctx.repoUrl, branch: ctx.branch });
     kvSet(`ws:${runId}`, JSON.stringify({ url: ws.url, branch: ws.branch, commit: ws.commit, files: ws.files, bytes: ws.bytes }));
@@ -212,10 +213,10 @@ async function drivePipeline(ctx: Ctx) {
   const wsRaw = kvGet(`ws:${runId}`);
   if (!wsRaw) throw new Error("workspace hilang setelah CLONING");
   const ws = J.parse<{ url: string; branch: string; commit: string; files: Record<string, string>; bytes: number }>(wsRaw, { url: ctx.repoUrl, branch: ctx.branch, commit: "", files: {}, bytes: 0 });
-  if (!dbRun("UPDATE runs SET commit_sha = ? WHERE id = ?", [ws.commit, runId]).changes) { /* noop */ }
+  await dbRun("UPDATE runs SET commit_sha = ? WHERE id = ?", [ws.commit, runId]);
 
   // ── 2. ANALYZING (+ arch extraction paralel, non-blocking) ───────────────
-  if (st("ANALYZING") === "pending") {
+  if ((await st("ANALYZING")) === "pending") {
     s.start("ANALYZING");
     const analysis = analyzeRepo(ws);
     kvSet(`analysis:${runId}`, JSON.stringify(analysis));
@@ -240,9 +241,9 @@ async function drivePipeline(ctx: Ctx) {
   if (!analysis) throw new Error("analysis hilang");
 
   // ── 3. SCAFFOLDING ──────────────────────────────────────────────────────
-  if (st("SCAFFOLDING") === "pending") {
+  if ((await st("SCAFFOLDING")) === "pending") {
     s.start("SCAFFOLDING");
-    const project = one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId]);
+    const project = await one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId]);
     const sc = scaffoldFramework(ws, analysis, project?.scaffold_root ?? "autoqa");
     kvSet(`scaffold:${runId}`, JSON.stringify(sc));
     s.ok("SCAFFOLDING", { created: sc.created.length, skipped_existing: sc.skipped.length });
@@ -250,7 +251,7 @@ async function drivePipeline(ctx: Ctx) {
   }
 
   // ── 4. PLANNING ─────────────────────────────────────────────────────────
-  if (st("PLANNING") === "pending") {
+  if ((await st("PLANNING")) === "pending") {
     s.start("PLANNING");
     const plan = planTestsDeterministic(analysis);
     kvSet(`plan:${runId}`, JSON.stringify(plan));
@@ -262,9 +263,9 @@ async function drivePipeline(ctx: Ctx) {
 
   // ── 5. GENERATING ───────────────────────────────────────────────────────
   let generated: GeneratedTest[] = J.parse<GeneratedTest[]>(kvGet(`generated:${runId}`), []);
-  if (st("GENERATING") === "pending") {
+  if ((await st("GENERATING")) === "pending") {
     s.start("GENERATING");
-    generated = generateTests(plan, one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId])?.scaffold_root ?? "autoqa");
+    generated = generateTests(plan, (await one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId]))?.scaffold_root ?? "autoqa");
     for (const g of generated) ws.files[g.file] = g.code;
     kvSet(`generated:${runId}`, JSON.stringify(generated));
     s.ok("GENERATING", { files: generated.length, api: generated.filter((g) => g.layer === "api").length, ui: generated.filter((g) => g.layer === "ui").length, e2e: generated.filter((g) => g.layer === "e2e").length });
@@ -275,7 +276,7 @@ async function drivePipeline(ctx: Ctx) {
   let iteration = 0;
   let gate = qualityGate(generated, `${runId}:gate`, 0);
   while (!gate.passed && iteration < 3) {
-    if (st("HEALING") !== "running" && st("HEALING") === "pending") {
+    if ((await st("HEALING")) !== "running" && (await st("HEALING")) === "pending") {
       s.start("HEALING");
       log(runId, "VALIDATING", `Quality gate gagal: ${gate.failures.length} masalah. Self-heal iterasi ${iteration + 1}/3`, "warn");
     }
@@ -287,12 +288,12 @@ async function drivePipeline(ctx: Ctx) {
     });
     for (const g of generated) ws.files[g.file] = g.code;
     iteration++;
-    if (st("VALIDATING") === "pending" || st("HEALING") === "running") s.start("VALIDATING");
+    if ((await st("VALIDATING")) === "pending" || (await st("HEALING")) === "running") s.start("VALIDATING");
     gate = qualityGate(generated, `${runId}:gate`, iteration);
     if (gate.passed) { s.ok("HEALING", { healed: iteration, remaining: 0 }); }
     await sleep(delay * 0.6);
   }
-  if (st("VALIDATING") === "pending" || st("VALIDATING") === "running") {
+  if ((await st("VALIDATING")) === "pending" || (await st("VALIDATING")) === "running") {
     if (gate.passed) s.ok("VALIDATING", { checked: gate.checked, healed_iterations: iteration });
     else {
       // tidak stabil setelah 3 iterasi → quarantine (BP-09)
@@ -307,7 +308,7 @@ async function drivePipeline(ctx: Ctx) {
 
   // ── 7. WAITING_APPROVAL (mode REVIEW-GATE) ──────────────────────────────
   if (ctx.mode === "REVIEW_GATE") {
-    if (st("WAITING_APPROVAL") === "pending") {
+    if ((await st("WAITING_APPROVAL")) === "pending") {
       s.start("WAITING_APPROVAL");
       await sendEmail({
         runId, kind: "approval_needed", to: ctx.recipients[0].email, locale: ctx.recipients[0].locale,
@@ -317,7 +318,7 @@ async function drivePipeline(ctx: Ctx) {
       });
       return; // engine berhenti; dilanjutkan approveRun()
     }
-    if (st("WAITING_APPROVAL") === "succeeded") {
+    if ((await st("WAITING_APPROVAL")) === "succeeded") {
       // approved -> lanjut
     } else {
       return;
@@ -325,7 +326,7 @@ async function drivePipeline(ctx: Ctx) {
   }
 
   // ── 8. COMMITTING ───────────────────────────────────────────────────────
-  if (st("COMMITTING") === "pending") {
+  if ((await st("COMMITTING")) === "pending") {
     s.start("COMMITTING");
     const diff = buildUnifiedDiff(generated);
     kvSet(`diff:${runId}`, diff);
@@ -338,7 +339,7 @@ async function drivePipeline(ctx: Ctx) {
 
   // ── 9. PROVISIONING (sharding) ──────────────────────────────────────────
   let shards: ReturnType<typeof planShards> = [];
-  if (st("PROVISIONING") === "pending") {
+  if ((await st("PROVISIONING")) === "pending") {
     s.start("PROVISIONING");
     shards = planShards(generated, new Map());
     kvSet(`shards:${runId}`, JSON.stringify(shards));
@@ -350,7 +351,7 @@ async function drivePipeline(ctx: Ctx) {
 
   // ── 10. EXECUTING ───────────────────────────────────────────────────────
   let execResults: ExecResult[] = [];
-  if (st("EXECUTING") === "pending") {
+  if ((await st("EXECUTING")) === "pending") {
     s.start("EXECUTING");
     log(runId, "EXECUTING", `Menjalankan ${generated.length} test dalam ${shards.length} shard (workers=${shards.length})`);
     for (const shard of shards) {
@@ -368,9 +369,9 @@ async function drivePipeline(ctx: Ctx) {
 
   // ── 11. ANALYZING_RESULTS ───────────────────────────────────────────────
   let summary: RunSummary | null = null;
-  if (st("ANALYZING_RESULTS") === "pending") {
+  if ((await st("ANALYZING_RESULTS")) === "pending") {
     s.start("ANALYZING_RESULTS");
-    const prev = one<{ summary: string }>(
+    const prev = await one<{ summary: string }>(
       "SELECT summary FROM runs WHERE project_id=? AND id<>? AND summary IS NOT NULL ORDER BY created_at DESC LIMIT 1", [ctx.projectId, runId]);
     const prevRate = prev ? (J.parse<RunSummary>(prev.summary, summaryFallback()).pass_rate) : null;
     summary = analyzeResults(execResults, generated, shards, prevRate);
@@ -384,7 +385,7 @@ async function drivePipeline(ctx: Ctx) {
   if (!summary) throw new Error("summary hilang");
 
   // ── 12. REPORTING (diagram + overlay + report) ─────────────────────────
-  if (st("REPORTING") === "pending") {
+  if ((await st("REPORTING")) === "pending") {
     s.start("REPORTING");
     const model = J.parse<ArchModel | null>(kvGet(`arch:${runId}`), null);
     const coverage = buildCoverage(model, generated, execResults);
@@ -398,11 +399,11 @@ async function drivePipeline(ctx: Ctx) {
   }
 
   // ── 13. NOTIFYING ───────────────────────────────────────────────────────
-  if (st("NOTIFYING") === "pending") {
+  if ((await st("NOTIFYING")) === "pending") {
     s.start("NOTIFYING");
     const summary2 = J.parse<RunSummary>(kvGet(`summary:${runId}`), summaryFallback());
     const model = J.parse<ArchModel | null>(kvGet(`arch:${runId}`), null);
-    const diagrams = all<{ kind: string; title: string; alt_text: string | null; in_email: number }>(
+    const diagrams = await all<{ kind: string; title: string; alt_text: string | null; in_email: number }>(
       "SELECT kind, title, alt_text, in_email FROM diagrams WHERE run_id = ?", [runId]);
     const reportUrl = `${process.env.PUBLIC_BASE_URL ?? "http://localhost:3000"}/r/${ctx.reportToken}`;
 
@@ -436,23 +437,23 @@ function summaryFallback(): RunSummary {
   return { total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0, duration_ms: 0, pass_rate: 0, delta_pass_rate: null, categories: {}, top_failures: [] };
 }
 
-function persistTestResults(runId: string, projectId: string, generated: GeneratedTest[], results: ExecResult[]) {
+async function persistTestResults(runId: string, projectId: string, generated: GeneratedTest[], results: ExecResult[]) {
   const byId = new Map(generated.map((g) => [g.conceptId, g]));
-  tx(() => {
-    dbRun("DELETE FROM test_results WHERE run_id = ?", [runId]);
+  await tx(async () => {
+    await dbRun("DELETE FROM test_results WHERE run_id = ?", [runId]);
     for (const r of results) {
       const g = byId.get(r.testId);
       if (!g) continue;
-      dbRun(
+      await dbRun(
         `INSERT INTO test_results(id, run_id, project_id, file, title, layer, tags, status, duration_ms, retries, error_message, error_category, prompt_version, model, quarantined, covers)
          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [uid("tr_"), runId, projectId, g.file, g.title, g.layer, JSON.stringify(g.tags), r.status, r.durationMs, r.retries,
           r.errorMessage, r.errorCategory, "v2-generator", "mock-llm", g.tags.includes("@quarantine") ? 1 : 0, JSON.stringify(g.covers)],
       );
       // statistik & skor flaky
-      const hist = all<{ id: string }>("SELECT id FROM test_stats WHERE project_id=? AND title=?", [projectId, g.title]);
+      const hist = await all<{ id: string }>("SELECT id FROM test_stats WHERE project_id=? AND title=?", [projectId, g.title]);
       const statId = uid("ts_");
-      dbRun(
+      await dbRun(
         `INSERT INTO test_stats(id, project_id, file, title, runs, avg_duration_ms, flaky_score, consecutive_green, last_status)
          VALUES(?,?,?,?,1,?,?,?,?)`,
         [statId, projectId, g.file, g.title, r.durationMs, r.status === "flaky" ? 0.2 : 0, r.status === "passed" ? 1 : 0, r.status],
@@ -490,30 +491,30 @@ function buildCoverage(
   return cov;
 }
 
-function persistArch(ctx: Ctx, model: ArchModel | null, cov: Record<string, CoverageEntry>, generated: GeneratedTest[]) {
+async function persistArch(ctx: Ctx, model: ArchModel | null, cov: Record<string, CoverageEntry>, generated: GeneratedTest[]) {
   if (!model) return;
   const snapId = model.snapshot_id;
-  tx(() => {
-    dbRun(
+  await tx(async () => {
+    await dbRun(
       `INSERT INTO arch_snapshots(id, project_id, run_id, commit_sha, model, node_count, edge_count, extractor_status, created_at)
        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
       [snapId, ctx.projectId, ctx.runId, model.repo.commit, JSON.stringify(model), model.nodes.length, model.edges.length, JSON.stringify(model.extractors), nowIso()],
     );
     for (const [nodeId, c] of Object.entries(cov)) {
       const kind = model.nodes.find((n) => n.id === nodeId)?.kind ?? "unknown";
-      dbRun(
+      await dbRun(
         `INSERT INTO node_coverage(run_id, node_id, kind, tests_total, passed, failed, flaky, state)
          VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(run_id, node_id) DO UPDATE SET state=excluded.state`,
         [ctx.runId, nodeId, kind, c.tests, c.passed, c.failed, c.flaky, c.state],
       );
     }
     for (const f of model.findings) {
-      dbRun("INSERT INTO arch_findings(id, snapshot_id, code, severity, title, detail, nodes, evidence) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+      await dbRun("INSERT INTO arch_findings(id, snapshot_id, code, severity, title, detail, nodes, evidence) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
         [f.id, snapId, f.type, f.severity, f.type, f.detail, JSON.stringify(f.nodes), JSON.stringify(f.evidence)]);
     }
     // devops findings ringkas dari docker/CI audit
     for (const f of model.findings.filter((f) => f.type.startsWith("dockerfile") || f.type.startsWith("ci_"))) {
-      dbRun("INSERT INTO devops_findings(id, run_id, tool, severity, rule, location, message, fix_hint) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+      await dbRun("INSERT INTO devops_findings(id, run_id, tool, severity, rule, location, message, fix_hint) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
         [uid("dv_"), ctx.runId, f.type.startsWith("dockerfile") ? "hadolint" : "ci-parser", f.severity, f.type, f.evidence[0]?.file ?? "-", f.detail, null]);
     }
   });
