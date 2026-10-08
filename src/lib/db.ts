@@ -75,9 +75,12 @@ export function postgresSql(sql: string): string {
   return sql.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|--[^\n]*|\/\*[\s\S]*?\*\/|\?/g,
     (part) => part === "?" ? `$${++index}` : part);
 }
-const postgresRows = <T>(rows: unknown[]): T[] => rows.map((row) => Object.fromEntries(
-  Object.entries(row as Record<string, unknown>).map(([key, value]) => [key, typeof value === "bigint" ? Number(value) : value]),
-) as T);
+const postgresRows = <T>(rows: unknown): T[] => {
+  const arr = Array.isArray(rows) ? rows : (rows && typeof rows === "object" && "rows" in rows ? (rows as any).rows : []);
+  return arr.map((row: any) => Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, typeof value === "bigint" ? Number(value) : value]),
+  ) as T);
+};
 const plain = <T>(row: unknown): T => (row == null ? (row as T) : ({ ...(row as object) } as T));
 
 export async function all<T = Record<string, any>>(sql: string, params: Params = []): Promise<T[]> {
@@ -119,7 +122,8 @@ export async function run(sql: string, params: Params = []) {
   if (usePrisma() && getPool()) {
     const pool = getPool()!;
     const pgSql = postgresSql(sql);
-    return pool.query(pgSql, params);
+    const result = await pool.query(pgSql, params);
+    return result;
   }
   if (usePrisma() && store?.prisma) {
     return store.prisma.$executeRawUnsafe(postgresSql(sql), ...params);
