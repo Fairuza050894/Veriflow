@@ -38,13 +38,21 @@ export function getDb(): DatabaseSync {
 // ---- Prisma (Postgres/Neon) ----
 let _prisma: PrismaClient | null = null;
 
+/** Per-request PrismaClient untuk serverless (Neon pooled).
+ * Di dev: singleton. Di prod (Vercel): new client per invocation. */
 export function getPrisma(): PrismaClient | null {
   if (!process.env.DATABASE_URL) return null;
-  if (_prisma) return _prisma;
-  _prisma = new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+  if (process.env.NODE_ENV === "development") {
+    if (_prisma) return _prisma;
+    _prisma = new PrismaClient({
+      log: ["query", "error", "warn"],
+    });
+    return _prisma;
+  }
+  // Production serverless: new client per request, auto-disconnect
+  return new PrismaClient({
+    log: ["error"],
   });
-  return _prisma;
 }
 
 /** Cek apakah pakai Prisma (Postgres) atau SQLite */
