@@ -5,21 +5,27 @@ import { randomUUID, createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { neon, neonConfig, Pool } from "@neondatabase/serverless";
+
+// Neon serverless driver (untuk raw queries di prod)
+neonConfig.fetchConnectionCache = true;
+
+let _pool: Pool | null = null;
+function getPool() {
+  if (!process.env.DATABASE_URL) return null;
+  if (_pool) return _pool;
+  _pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  return _pool;
+}
 
 export const uid = (prefix = "") =>
   prefix + randomUUID().replaceAll("-", "").slice(0, 20);
 export const nowIso = () => new Date().toISOString();
 export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-// ---- SQLite (current, default) ----
+// ---- SQLite (dev default) ----
 let _db: DatabaseSync | null = null;
 
-/**
- * Lokasi DB:
- *  - default dev: ./.data/veriflow.db (persisten)
- *  - Vercel: set VERIFLOW_DB_PATH=/tmp/veriflow.db (ephemeral)
- *  - Produksi: set DATABASE_URL untuk Prisma/Postgres
- */
 export function dbPath(): string {
   const raw = process.env.VERIFLOW_DB_PATH ?? "./.data/veriflow.db";
   const p = isAbsolute(raw) ? raw : resolve(process.cwd(), raw);
@@ -35,34 +41,27 @@ export function getDb(): DatabaseSync {
   return _db;
 }
 
-// ---- Prisma (Postgres/Neon) ----
+// ---- Prisma (hanya untuk migrasi/generate) ----
 let _prisma: PrismaClient | null = null;
-
-/** Per-request PrismaClient untuk serverless (Neon pooled).
- * Di dev: singleton. Di prod (Vercel): new client per invocation. */
 export function getPrisma(): PrismaClient | null {
   if (!process.env.DATABASE_URL) return null;
   if (process.env.NODE_ENV === "development") {
     if (_prisma) return _prisma;
-    _prisma = new PrismaClient({
-      log: ["query", "error", "warn"],
-    });
+    _prisma = new PrismaClient({ log: ["query", "error", "warn"] });
     return _prisma;
   }
-  // Production serverless: new client per request, auto-disconnect
-  return new PrismaClient({
-    log: ["error"],
-  });
+  return new PrismaClient({ log: ["error"] });
 }
 
-/** Cek apakah pakai Prisma (Postgres) atau SQLite */
 export function usePrisma(): boolean {
   return !!process.env.DATABASE_URL;
 }
 
+
+
 // ---- Unified Query Interface ----
 type Params = Array<string | number | null>;
-const transaction = new AsyncLocalStorage<{ prisma?: Prisma.TransactionClient }>();
+const transaction = new AsyncLocalStorage<{ prisma?: Prisma.TransactionClient; sqlTx?: any }>();
 let sqliteQueue: Promise<unknown> = Promise.resolve();
 async function sqliteAccess<T>(fn: () => T | Promise<T>): Promise<T> {
   if (transaction.getStore()) return fn();
@@ -70,7 +69,6 @@ async function sqliteAccess<T>(fn: () => T | Promise<T>): Promise<T> {
   sqliteQueue = pending.catch(() => {});
   return pending;
 }
-// SQL uses positional parameters; quoted strings/comments must stay untouched.
 export function postgresSql(sql: string): string {
   let index = 0;
   sql = sql.replace(/json_extract\((\w+),'\$\.(\w+)'\)/gi, "($1::jsonb->>'$2')");
@@ -80,12 +78,28 @@ export function postgresSql(sql: string): string {
 const postgresRows = <T>(rows: unknown[]): T[] => rows.map((row) => Object.fromEntries(
   Object.entries(row as Record<string, unknown>).map(([key, value]) => [key, typeof value === "bigint" ? Number(value) : value]),
 ) as T);
-/** node:sqlite mengembalikan baris ber-prototype null; Next menolak kirimnya ke Client Component. Normalkan sekali di sini. */
 const plain = <T>(row: unknown): T => (row == null ? (row as T) : ({ ...(row as object) } as T));
 
 export async function all<T = Record<string, any>>(sql: string, params: Params = []): Promise<T[]> {
+  const store = transaction.getStore();
+  if (usePrisma() && store?.sqlTx) {
+    // Di dalam transaksi Neon
+    const pgSql = postgresSql(sql);
+    const rows = await store.sqlTx.unsafe(pgSql, params);
+    return postgresRows<T>(rows);
+  }
+  if (usePrisma() && getPool()) {
+    // Neon serverless Pool untuk raw queries
+    const pool = getPool()!;
+    const pgSql = postgresSql(sql);
+    const result = await pool.query(pgSql, params);
+    return postgresRows<T>(result.rows);
+  }
+  if (usePrisma() && store?.prisma) {
+    return postgresRows<T>(await store.prisma.$queryRawUnsafe(postgresSql(sql), ...params));
+  }
   if (usePrisma()) {
-    const prisma = transaction.getStore()?.prisma ?? getPrisma()!;
+    const prisma = getPrisma()!;
     return postgresRows<T>(await prisma.$queryRawUnsafe(postgresSql(sql), ...params));
   }
   return sqliteAccess(() => (getDb().prepare(sql).all(...params) as unknown[]).map((r) => plain<T>(r)));
@@ -96,19 +110,52 @@ export async function one<T = Record<string, any>>(sql: string, params: Params =
 }
 
 export async function run(sql: string, params: Params = []) {
+  const store = transaction.getStore();
+  if (usePrisma() && store?.sqlTx) {
+    // Di dalam transaksi Neon
+    const pgSql = postgresSql(sql);
+    return store.sqlTx.unsafe(pgSql, params);
+  }
+  if (usePrisma() && getPool()) {
+    const pool = getPool()!;
+    const pgSql = postgresSql(sql);
+    return pool.query(pgSql, params);
+  }
+  if (usePrisma() && store?.prisma) {
+    return store.prisma.$executeRawUnsafe(postgresSql(sql), ...params);
+  }
   if (usePrisma()) {
-    const prisma = transaction.getStore()?.prisma ?? getPrisma()!;
+    const prisma = getPrisma()!;
     return prisma.$executeRawUnsafe(postgresSql(sql), ...params);
   }
   return sqliteAccess(() => getDb().prepare(sql).run(...params));
 }
 
-/** Jalankan dalam transaksi; dipakai untuk idempotency & `exactly-once` efek eksternal. */
 export async function tx<T>(fn: () => Promise<T>): Promise<T> {
-  if (transaction.getStore()) return fn();
+  const store = transaction.getStore();
+  if (store) return fn();
+  if (usePrisma() && getPool()) {
+    // Neon serverless: gunakan transaksi native Pool
+    const pool = getPool()!;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await transaction.run({
+        sqlTx: {
+          unsafe: (query: string, params: Params) => client.query(query, params),
+        },
+      }, fn);
+      await client.query("COMMIT");
+      return result;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
   if (usePrisma()) {
     const prisma = getPrisma()!;
-    // Neon serverless: skip advisory lock (P2028 on pooled connections)
     return prisma.$transaction(async (client) => {
       return transaction.run({ prisma: client }, fn);
     }, { timeout: 30000 });
@@ -143,5 +190,4 @@ export function kvSet(key: string, value: string) {
     [key, value, nowIso()]);
 }
 
-// Export Prisma types for convenience
 export type { PrismaClient } from "@prisma/client";
