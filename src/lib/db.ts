@@ -100,9 +100,8 @@ export async function tx<T>(fn: () => Promise<T>): Promise<T> {
   if (transaction.getStore()) return fn();
   if (usePrisma()) {
     const prisma = getPrisma()!;
+    // Neon serverless: skip advisory lock (P2028 on pooled connections)
     return prisma.$transaction(async (client) => {
-      // ponytail: serialize write transactions; use scoped locks when throughput requires it.
-      await client.$executeRawUnsafe("SELECT pg_advisory_xact_lock(8675309)");
       return transaction.run({ prisma: client }, fn);
     }, { timeout: 30000 });
   }
