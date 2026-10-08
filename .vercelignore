@@ -1,0 +1,15 @@
+node_modules
+.next
+.next-build
+.next-*
+.data
+*.tsbuildinfo
+coverage
+.env.local*
+.env.*.local
+.vercel
+runner/work
+runner/reports
+runner/node_modules
+*.log
+.git
