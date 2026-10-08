@@ -3,6 +3,8 @@ import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export const uid = (prefix = "") =>
   prefix + randomUUID().replaceAll("-", "").slice(0, 20);
@@ -52,51 +54,70 @@ export function usePrisma(): boolean {
 
 // ---- Unified Query Interface ----
 type Params = Array<string | number | null>;
+const transaction = new AsyncLocalStorage<{ prisma?: Prisma.TransactionClient }>();
+let sqliteQueue: Promise<unknown> = Promise.resolve();
+async function sqliteAccess<T>(fn: () => T | Promise<T>): Promise<T> {
+  if (transaction.getStore()) return fn();
+  const pending = sqliteQueue.then(fn);
+  sqliteQueue = pending.catch(() => {});
+  return pending;
+}
+// SQL uses positional parameters; quoted strings/comments must stay untouched.
+export function postgresSql(sql: string): string {
+  let index = 0;
+  sql = sql.replace(/json_extract\((\w+),'\$\.(\w+)'\)/gi, "($1::jsonb->>'$2')");
+  return sql.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|--[^\n]*|\/\*[\s\S]*?\*\/|\?/g,
+    (part) => part === "?" ? `$${++index}` : part);
+}
+const postgresRows = <T>(rows: unknown[]): T[] => rows.map((row) => Object.fromEntries(
+  Object.entries(row as Record<string, unknown>).map(([key, value]) => [key, typeof value === "bigint" ? Number(value) : value]),
+) as T);
 /** node:sqlite mengembalikan baris ber-prototype null; Next menolak kirimnya ke Client Component. Normalkan sekali di sini. */
 const plain = <T>(row: unknown): T => (row == null ? (row as T) : ({ ...(row as object) } as T));
 
 export async function all<T = Record<string, any>>(sql: string, params: Params = []): Promise<T[]> {
   if (usePrisma()) {
-    const prisma = getPrisma()!;
-    return prisma.$queryRawUnsafe(sql, ...params) as Promise<T[]>;
+    const prisma = transaction.getStore()?.prisma ?? getPrisma()!;
+    return postgresRows<T>(await prisma.$queryRawUnsafe(postgresSql(sql), ...params));
   }
-  return (getDb().prepare(sql).all(...params) as unknown[]).map((r) => plain<T>(r));
+  return sqliteAccess(() => (getDb().prepare(sql).all(...params) as unknown[]).map((r) => plain<T>(r)));
 }
 
 export async function one<T = Record<string, any>>(sql: string, params: Params = []): Promise<T | undefined> {
-  if (usePrisma()) {
-    const prisma = getPrisma()!;
-    const rows = await prisma.$queryRawUnsafe(sql, ...params) as T[];
-    return rows[0];
-  }
-  const row = getDb().prepare(sql).get(...params);
-  return row == null ? undefined : plain<T>(row);
+  return (await all<T>(sql, params))[0];
 }
 
 export async function run(sql: string, params: Params = []) {
   if (usePrisma()) {
-    const prisma = getPrisma()!;
-    return prisma.$executeRawUnsafe(sql, ...params);
+    const prisma = transaction.getStore()?.prisma ?? getPrisma()!;
+    return prisma.$executeRawUnsafe(postgresSql(sql), ...params);
   }
-  return getDb().prepare(sql).run(...params);
+  return sqliteAccess(() => getDb().prepare(sql).run(...params));
 }
 
 /** Jalankan dalam transaksi; dipakai untuk idempotency & `exactly-once` efek eksternal. */
 export async function tx<T>(fn: () => Promise<T>): Promise<T> {
+  if (transaction.getStore()) return fn();
   if (usePrisma()) {
     const prisma = getPrisma()!;
-    return prisma.$transaction(fn);
+    return prisma.$transaction(async (client) => {
+      // ponytail: serialize write transactions; use scoped locks when throughput requires it.
+      await client.$executeRawUnsafe("SELECT pg_advisory_xact_lock(8675309)");
+      return transaction.run({ prisma: client }, fn);
+    }, { timeout: 30000 });
   }
-  const d = getDb();
-  d.exec("BEGIN");
-  try {
-    const out = await fn();
-    d.exec("COMMIT");
-    return out;
-  } catch (e) {
-    d.exec("ROLLBACK");
-    throw e;
-  }
+  return sqliteAccess(() => transaction.run({}, async () => {
+    const d = getDb();
+    d.exec("BEGIN IMMEDIATE");
+    try {
+      const out = await fn();
+      d.exec("COMMIT");
+      return out;
+    } catch (e) {
+      d.exec("ROLLBACK");
+      throw e;
+    }
+  }));
 }
 
 export const J = {
@@ -107,12 +128,11 @@ export const J = {
   str: (v: unknown) => JSON.stringify(v ?? null),
 };
 
-export function kvGet(key: string): string | undefined {
-  // For Prisma, use raw query
-  return (one<{ value: string }>("SELECT value FROM kv WHERE key = ?", [key]) as any)?.value;
+export async function kvGet(key: string): Promise<string | undefined> {
+  return (await one<{ value: string }>("SELECT value FROM kv WHERE key = ?", [key]))?.value;
 }
 export function kvSet(key: string, value: string) {
-  run("INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+  return run("INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
     [key, value, nowIso()]);
 }
 

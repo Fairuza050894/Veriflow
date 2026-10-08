@@ -32,7 +32,7 @@ export default async function ArchitecturePage({ searchParams }: { searchParams:
     "SELECT node_id, kind, tests_total, passed, failed, flaky, state FROM node_coverage WHERE run_id = ? ORDER BY tests_total DESC LIMIT 80", [chosen.run_id]);
   const findings = await all<Record<string, any>>("SELECT code, severity, title, detail, evidence FROM arch_findings WHERE snapshot_id = ?", [chosen.id]);
   const extractors = JSON.parse(chosen.extractor_status) as Array<{ name: string; version: string; status: string; reason?: string }>;
-  const diff = sp.compare ? snapshotDiff(sp.compare, chosen.run_id) : null;
+  const diff = sp.compare ? await snapshotDiff(sp.compare, chosen.run_id) : null;
 
   return (
     <div className="space-y-4">

@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { Card, CardHead, Kpi, StatusChip, EmptyState, CategoryChip } from "@/components/ui";
+import { Card, CardHead, Kpi, StatusChip, EmptyState } from "@/components/ui";
 import { PassTrend, BarList, Donut, Sparkline } from "@/components/charts";
 import { overview, allRunRows } from "@/lib/queries";
 import { getLang } from "@/lib/lang-server";
 import { t } from "@/lib/i18n";
 import { fmtPct, fmtDuration, fmtMoney, fmtNum, fmtDate, shortSha } from "@/lib/util";
-import { ConnectRepoButton, RunButton, CancelButton } from "@/components/actions";
-import { one } from "@/lib/db";
+import { ConnectRepoButton, CancelButton } from "@/components/actions";
+import { all } from "@/lib/db";
+import { DashboardControls } from "@/components/dashboard-controls";
 import type { Overview } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -16,10 +17,17 @@ const CAT_COLORS: Record<string, string> = {
   data_issue: "#a855f7", infra: "#64748b", flaky: "#eab308",
 };
 
-export default async function OverviewPage() {
+export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   const lang = await getLang();
-  const o = await overview();
-  const firstProject = await one<{ id: string }>("SELECT id FROM projects ORDER BY created_at LIMIT 1");
+  const id = lang === "id";
+  const params = await searchParams;
+  const query = typeof params.q === "string" ? params.q.trim().slice(0, 100) : "";
+  const status = ["FAILED", "WAITING_APPROVAL", "COMPLETED", "COMPLETED_WITH_WARNINGS", "CANCELLED", "TIMED_OUT"].includes(params.status ?? "") ? params.status! : "";
+  const o: Overview = await overview();
+  const projects = await all<{ id: string; name: string }>("SELECT id, name FROM projects ORDER BY name");
+  const recentRuns = query || status ? await allRunRows(
+    "WHERE (LOWER(p.name) LIKE LOWER(?) OR LOWER(r.branch) LIKE LOWER(?)) AND (? = '' OR r.status = ?) ORDER BY r.created_at DESC LIMIT 50",
+    [`%${query}%`, `%${query}%`, status, status]) : o.recentRuns;
   const activeRuns = await allRunRows(
     "WHERE r.status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT','COMPLETED_WITH_WARNINGS') ORDER BY r.created_at DESC LIMIT 4");
 
@@ -33,22 +41,22 @@ export default async function OverviewPage() {
           <div>
             <p className="kpi-label">{t(lang, "brand.tagline")}</p>
             <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
-              Kendali kualitas rantai pasok Anda, <span className="text-dispatch">otomatis</span>.
+              {id ? "Pusat kendali kualitas" : "Quality control dashboard"}
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              Tempel URL repo → Veriflow mendeteksi stack, merancang test plan, menghasilkan test UI + API,
-              menjalankannya di sandbox, lalu mengirim ringkasan + diagram arsitektur ke stakeholder lewat email.
+              {id ? "Pantau hasil pengujian, tinjau run yang perlu tindakan, jalankan project berikutnya." : "Monitor test results, review runs needing attention, and start your next project run."}
             </p>
           </div>
           <div className="flex gap-2">
-            {firstProject ? <RunButton projectId={firstProject.id} label={t(lang, "action.run")} /> : null}
             <ConnectRepoButton label={t(lang, "action.connect")} />
           </div>
         </div>
+        <div className="relative mt-4"><DashboardControls projects={projects} lang={lang} /></div>
+        <p className="relative mt-3 text-xs text-amber-300">{id ? "SIMULASI — hasil runner, biaya AI, dan PR masih menggunakan data mock." : "SIMULATION — runner results, AI costs, and PRs currently use mock data."}</p>
         <div className="hairline my-5" />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Antrean aktif" value={fmtNum(o.queueDepth)} hint="run menunggu atau berjalan" />
-          <Stat label="Runner aktif" value={fmtNum(o.runnerActive)} hint="shard Playwright berjalan" />
+          <Stat label={id ? "Run tahap eksekusi" : "Runs executing"} value={fmtNum(o.runnerActive)} hint={id ? "jumlah run, bukan shard" : "run count, not shards"} />
           <Stat label="Run 24 jam" value={fmtNum(o.runs24h)} hint={`${fmtNum(o.projects)} project terhubung`} />
           <Stat label="Email 30 hari" value={fmtNum(o.emailsSent)} hint="laporan terkirim" />
         </div>
@@ -60,7 +68,7 @@ export default async function OverviewPage() {
         <Kpi label={t(lang, "kpi.runs24h")} value={fmtNum(o.runs24h)} tone="cyan" />
         <Kpi
           label={t(lang, "kpi.passrate")}
-          value={fmtPct(o.passRate7d, 1)}
+           value={o.passTrend.length ? fmtPct(o.passRate7d, 1) : "—"}
           tone={o.passRate7d >= 0.95 ? "go" : o.passRate7d >= 0.9 ? "hold" : "stop"}
           delta={<Sparkline data={o.passTrend.map((p) => p.rate)} height={26} />}
         />
@@ -74,20 +82,20 @@ export default async function OverviewPage() {
           <CardHead title="Sedang berjalan" sub="Pipeline aktif — klik untuk melihat progres langsung" />
           <div className="grid gap-2 px-5 pb-5">
             {activeRuns.map((r) => (
-              <Link key={r.id} href={`/runs/${r.id}`} className="sweep relative flex items-center justify-between gap-4 overflow-hidden rounded-lg border border-dispatch/20 bg-dispatch/[0.04] px-4 py-3 transition hover:border-dispatch/50">
-                <div className="min-w-0">
+               <div key={r.id} className="relative flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dispatch/20 bg-dispatch/[0.04] px-4 py-3">
+                 <Link href={`/runs/${r.id}`} className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-slate-100">{r.project_name}</span>
                     <StatusChip status={r.status} />
                   </div>
                   <p className="mono mt-0.5 truncate text-xs text-slate-500">
                     {r.branch}@{shortSha(r.commit_sha)} · {r.env_name ?? "default"} · {fmtDate(r.created_at, lang === "id" ? "id-ID" : "en-US")}
-                  </p>
-                </div>
+                   </p>
+                 </Link>
                 <div className="shrink-0">
                   <CancelButton runId={r.id} />
                 </div>
-              </Link>
+               </div>
             ))}
           </div>
         </Card>
@@ -118,18 +126,13 @@ export default async function OverviewPage() {
           <BarList items={o.flakyTop.map((s) => ({ label: s.title, value: Number(s.score.toFixed(2)) }))} tone="#eab308" format={(v) => v.toFixed(2)} />
         </Card>
         <Card>
-          <CardHead title="Pipeline stage" sub="Durasi p50 vs p95 seluruh run" />
+           <CardHead title={id ? "Durasi run" : "Run duration"} sub={id ? "Persentil dari maksimal 50 run terbaru, 14 hari" : "Percentiles from up to 50 recent runs, 14 days"} />
           <div className="space-y-3 px-5 pb-5">
-            {[
-              { k: "Clone → Analyze", v: 42 },
-              { k: "Generate + heal", v: 96 },
-              { k: "Execute shards", v: 240 },
-              { k: "Report + email", v: 38 },
-            ].map((s) => (
+             {o.runDurations.map((item) => ({ k: item.label.toUpperCase(), v: item.p50 || item.p95 })).map((s) => (
               <div key={s.k}>
-                <div className="flex justify-between text-xs"><span className="text-slate-400">{s.k}</span><span className="mono text-slate-500">{fmtDuration(s.v * 1000)}</span></div>
+                 <div className="flex justify-between text-xs"><span className="text-slate-300">{s.k}</span><span className="mono text-slate-300">{s.v ? fmtDuration(s.v) : "—"}</span></div>
                 <div className="mt-1 h-1.5 rounded-full bg-night-700">
-                  <div className="h-full rounded-full bg-gradient-to-r from-dispatch to-amber-glow" style={{ width: `${Math.min(100, s.v / 2.4)}%` }} />
+                   <div className="h-full rounded-full bg-dispatch" style={{ width: `${Math.min(100, s.v / (o.durationP95 || 1) * 100)}%` }} />
                 </div>
               </div>
             ))}
@@ -140,8 +143,21 @@ export default async function OverviewPage() {
       {/* Tables */}
       <div className="grid gap-3 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHead title={t(lang, "table.recent")} sub="Delapan run terakhir lintas project" />
-          <RunTable runs={o.recentRuns} lang={lang} />
+           <CardHead title={t(lang, "table.recent")} sub={id ? "8 run terbaru; hingga 50 hasil saat filter aktif" : "8 recent runs; up to 50 results when filtered"} />
+           <form className="flex flex-wrap items-end gap-2 px-5 pb-4" action="/">
+             <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-slate-300">{id ? "Cari project / branch" : "Search project / branch"}
+               <input name="q" defaultValue={query} maxLength={100} className="rounded-lg border border-slate-600 bg-night-900 px-3 py-2 text-sm" />
+             </label>
+             <label className="flex flex-col gap-1 text-xs text-slate-300">Status
+               <select name="status" defaultValue={status} className="rounded-lg border border-slate-600 bg-night-900 px-3 py-2 text-sm">
+                 <option value="">{id ? "Semua status" : "All statuses"}</option>
+                 {["FAILED", "WAITING_APPROVAL", "COMPLETED", "COMPLETED_WITH_WARNINGS", "CANCELLED", "TIMED_OUT"].map((s) => <option key={s} value={s}>{s.replaceAll("_", " ")}</option>)}
+               </select>
+             </label>
+             <button className="btn btn-ghost" type="submit">Filter</button>
+             {(query || status) && <Link href="/" className="btn btn-ghost">Reset</Link>}
+           </form>
+           <RunTable runs={recentRuns} lang={lang} />
         </Card>
         <Card>
           <CardHead title={t(lang, "table.attention")} sub="Gagal atau menunggu persetujuan" />
@@ -158,7 +174,7 @@ export default async function OverviewPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="Tidak ada run bermasalah" hint="Semua pipeline selesai bersih dalam 24 jam terakhir." />
+             <EmptyState title={id ? "Tidak ada run yang perlu tindakan" : "No runs need attention"} hint={id ? "Tidak ada run gagal, timeout, atau menunggu persetujuan." : "No failed, timed-out, or approval-pending runs."} />
           )}
         </Card>
       </div>
@@ -176,11 +192,12 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-function RunTable({ runs, lang }: { runs: ReturnType<typeof allRunRows>; lang: "id" | "en" }) {
+function RunTable({ runs, lang }: { runs: Awaited<ReturnType<typeof allRunRows>>; lang: "id" | "en" }) {
   if (!runs.length) return <EmptyState title={t(lang, "empty.noRuns")} />;
   return (
     <div className="overflow-x-auto px-2 pb-4">
-      <table className="w-full text-left text-sm">
+       <table className="w-full text-left text-sm">
+         <caption className="sr-only">{t(lang, "table.recent")}</caption>
         <thead>
           <tr className="kpi-label border-b border-slate-700/50">
             <th className="px-3 py-2">Project</th>
@@ -206,12 +223,12 @@ function RunTable({ runs, lang }: { runs: ReturnType<typeof allRunRows>; lang: "
                       {fmtPct(r.summary.pass_rate)}
                     </span>
                     <span className="text-slate-600"> · {r.summary.passed}/{r.summary.total}</span>
-                    {r.summary.failed ? <span className="ml-1.5"><CategoryChip category="product_bug" /></span> : null}
+                     {r.summary.failed ? <span className="ml-1.5 text-stop">{r.summary.failed} {lang === "id" ? "gagal" : "failed"}</span> : null}
                   </span>
                 ) : <span className="text-xs text-slate-600">—</span>}
               </td>
-              <td className="mono px-3 py-2.5 text-xs text-slate-400">{fmtDuration(r.summary?.duration_ms ?? 0)}</td>
-              <td className="mono px-3 py-2.5 text-xs text-slate-400">{r.cost?.cost_usd ? fmtMoney(r.cost.cost_usd) : "—"}</td>
+               <td className="mono px-3 py-2.5 text-xs text-slate-400">{r.summary ? fmtDuration(r.summary.duration_ms) : "—"}</td>
+               <td className="mono px-3 py-2.5 text-xs text-slate-400">{r.cost?.cost_usd != null ? fmtMoney(r.cost.cost_usd) : "—"}</td>
               <td className="px-3 py-2.5 text-xs text-slate-500">{fmtDate(r.created_at, lang === "id" ? "id-ID" : "en-US")}</td>
             </tr>
           ))}

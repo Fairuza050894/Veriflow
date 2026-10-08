@@ -1,65 +1,49 @@
-import { all, one, run as dbRun, kvGet, nowIso, sha256, J } from "../db";
+import { all, one, run as dbRun, kvGet, nowIso, sha256, J, tx } from "../db";
 import { advanceRun, log, setStatus } from "./engine";
 import type { RunSummary } from "../types";
 import { maskSecrets } from "../mailer";
 
 /** BP-10 — approve / reject pada mode REVIEW-GATE. */
 export async function decideReview(runId: string, decision: "approve" | "reject", reviewer = "engineer") {
+  await tx(async () => {
   const run = await one<{ mode: string }>("SELECT mode FROM runs WHERE id = ?", [runId]);
   if (!run) throw new Error("run tidak ditemukan");
   const step = await one<{ status: string }>(
     "SELECT status FROM run_steps WHERE run_id=? AND name='WAITING_APPROVAL'", [runId]);
   if (!step || step.status !== "running") throw new Error("run tidak sedang menunggu persetujuan");
 
-  dbRun(
+  await dbRun(
     "UPDATE run_steps SET status=?, finished_at=?, detail=? WHERE run_id=? AND name='WAITING_APPROVAL'",
     [decision === "approve" ? "succeeded" : "cancelled", nowIso(), JSON.stringify({ reviewer, decision, at: nowIso() }), runId],
   );
 
   if (decision === "reject") {
-    log(runId, "WAITING_APPROVAL", `${reviewer} menolak hasil generate`);
-    setStatus(runId, "CANCELLED", { finished_at: nowIso() });
-    dbRun("UPDATE run_steps SET status='cancelled' WHERE run_id=? AND status IN ('pending','running')", [runId]);
-    log(runId, "engine", "Run dibatalkan oleh pengguna");
-    return { status: "CANCELLED" as const };
+    await log(runId, "WAITING_APPROVAL", `${reviewer} menolak hasil generate`);
+    await setStatus(runId, "CANCELLED", { finished_at: nowIso() });
+    await dbRun("UPDATE run_steps SET status='cancelled' WHERE run_id=? AND status IN ('pending','running')", [runId]);
+    await log(runId, "engine", "Run dibatalkan oleh pengguna");
+  } else {
+    await setStatus(runId, "COMMITTING");
+    await log(runId, "WAITING_APPROVAL", `${reviewer} menyetujui hasil generate`);
   }
-
-  log(runId, "WAITING_APPROVAL", `${reviewer} menyetujui hasil generate`);
+  });
+  if (decision === "reject") return { status: "CANCELLED" as const };
   return advanceRun(runId);
 }
 
-export function cancelRun(runId: string) {
-  setStatus(runId, "CANCELLED", { finished_at: nowIso() });
-  dbRun("UPDATE run_steps SET status='cancelled' WHERE run_id=? AND status IN ('pending','running')", [runId]);
-  log(runId, "engine", "Run dibatalkan oleh pengguna");
+export async function cancelRun(runId: string) {
+  await setStatus(runId, "CANCELLED", { finished_at: nowIso() });
+  await dbRun("UPDATE run_steps SET status='cancelled' WHERE run_id=? AND status IN ('pending','running')", [runId]);
+  await log(runId, "engine", "Run dibatalkan oleh pengguna");
   return { status: "CANCELLED" as const };
 }
 
-// reportTokenFor: get token from database (only hash stored, raw token not persisted)
-export const reportTokenFor = (runId: string): string | null => {
-  const link = one<{ token_hash: string }>("SELECT token_hash FROM report_links WHERE run_id = ? AND revoked_at IS NULL", [runId]);
-  if (!link) return null;
-  // We can't reconstruct the raw token from hash. For API responses at creation time,
-  // the token is returned directly from createRun. For later lookups, use the hash.
-  // This function is kept for compatibility but returns null.
-  return null;
-};
-
 /** Report read-only untuk customer via signed link (FR-RPT-07). */
 export async function publicReportByToken(token: string) {
+  if (!/^[a-f0-9]{64}$/.test(token)) return null;
   const link = await one<{ run_id: string }>(
     "SELECT run_id FROM report_links WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
     [sha256(token), nowIso()],
-  );
-  if (!link) return null;
-  return buildPublicReport(link.run_id);
-}
-
-/** Report read-only via runId (fallback when token not available). */
-export async function publicReportByRunId(runId: string) {
-  const link = await one<{ run_id: string }>(
-    "SELECT run_id FROM report_links WHERE run_id = ? AND revoked_at IS NULL AND expires_at > ?",
-    [runId, nowIso()],
   );
   if (!link) return null;
   return buildPublicReport(link.run_id);
@@ -74,23 +58,26 @@ async function buildPublicReport(runId: string) {
   const project = await one<{ name: string }>("SELECT name FROM projects WHERE id = ?", [run.project_id]);
   const env = await one<{ name: string }>(
     "SELECT e.name FROM environments e JOIN runs r ON r.environment_id = e.id WHERE r.id = ?", [runId]);
-  const summary = J.parse<RunSummary | null>(kvGet(`summary:${runId}`), null);
+  const summary = J.parse<RunSummary | null>(await kvGet(`summary:${runId}`), null);
   const diagrams = await all<{ kind: string; title: string; syntax: string; source: string; alt_text: string | null; status: string }>(
-    "SELECT kind, title, syntax, source, alt_text, status FROM diagrams WHERE run_id = ? ORDER BY kind", [runId],
+    "SELECT kind, title, syntax, source, alt_text, status FROM diagrams WHERE run_id = ? AND audience = 'customer' ORDER BY kind", [runId],
   );
   const topFailures = await all<{ title: string; file: string; status: string; error_category: string | null; error_message: string | null }>(
     "SELECT title, file, status, error_category, error_message FROM test_results WHERE run_id = ? AND status IN ('failed','flaky') LIMIT 10", [runId],
   );
-  const findings = await all<{ code: string; severity: string; title: string; detail: string; sensitive: number; internal_only: number }>(
-    "SELECT code, severity, title, detail, sensitive, internal_only FROM arch_findings WHERE snapshot_id = (SELECT id FROM arch_snapshots WHERE run_id = ?) LIMIT 6", [runId],
+  const findings = await all<{ code: string; severity: string; title: string; detail: string; nodes: string }>(
+    "SELECT code, severity, title, detail, nodes FROM arch_findings WHERE snapshot_id = (SELECT id FROM arch_snapshots WHERE run_id = ?) LIMIT 6", [runId],
   );
+  const snapshot = await one<{ model: string }>("SELECT model FROM arch_snapshots WHERE run_id = ?", [runId]);
+  const model = J.parse<{ nodes: Array<{ id: string; sensitive?: boolean; internal_only?: boolean }> }>(snapshot?.model, { nodes: [] });
+  const publicNodes = new Set(model.nodes.filter((n) => !n.sensitive && !n.internal_only && !n.id.startsWith("db:")).map((n) => n.id));
   // Cakupan: sembunyikan node database (db:*) untuk audiens customer
   const coverage = await all<{ node_id: string; state: string; tests_total: number }>(
     "SELECT node_id, state, tests_total FROM node_coverage WHERE run_id = ? AND tests_total > 0 AND node_id NOT LIKE 'db:%'", [runId]);
 
   // Redaksi untuk audiens customer: hilangkan temuan sensitif/internal_only
   const redactedFindings = findings
-    .filter((f) => !(f.sensitive === 1 || f.internal_only === 1))
+    .filter((f) => J.parse<string[]>(f.nodes, [""]).every((id) => publicNodes.has(id)))
     .map((f) => ({ code: f.code, severity: f.severity, title: f.title, detail: maskSecrets(f.detail) }));
 
   // Mask secrets di pesan error
@@ -102,9 +89,9 @@ async function buildPublicReport(runId: string) {
   return { run, project, env, summary, diagrams, topFailures: maskedFailures, findings: redactedFindings, coverage };
 }
 
-export function snapshotDiff(fromRun: string, toRun: string) {
-  const a = J.parse<{ nodes: Array<{ id: string }> } | null>(kvGet(`arch:${fromRun}`), null);
-  const b = J.parse<{ nodes: Array<{ id: string }> } | null>(kvGet(`arch:${toRun}`), null);
+export async function snapshotDiff(fromRun: string, toRun: string) {
+  const a = J.parse<{ nodes: Array<{ id: string }> } | null>(await kvGet(`arch:${fromRun}`), null);
+  const b = J.parse<{ nodes: Array<{ id: string }> } | null>(await kvGet(`arch:${toRun}`), null);
   if (!a || !b) return null;
   const av = new Set(a.nodes.map((n) => n.id));
   const bv = new Set(b.nodes.map((n) => n.id));

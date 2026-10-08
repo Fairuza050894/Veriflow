@@ -60,7 +60,7 @@ export async function sendEmail(p: EmailPayload): Promise<{ sent: boolean; id: s
     status = "queued";
   }
 
-  dbRun(
+  await dbRun(
     `INSERT INTO email_messages(id, run_id, kind, to_email, subject, status, attempts, body_html, body_text, idempotency_key, created_at, sent_at)
      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, p.runId, p.kind, p.to, p.subject, status, provider === "outbox" ? 1 : 1, html, text, idem, nowIso(), status === "sent" ? nowIso() : null],

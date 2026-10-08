@@ -39,12 +39,12 @@ export async function POST(req: Request) {
   // idemoten per shard: kalau shard sama sudah masuk, jangan dobelkan (FR-ORC-03)
   const shardNo = Number(body.shard ?? 1);
   const key = `exec:${body.run_id}:${shardNo}`;
-  if (kvGet(key)) {
+  if (await kvGet(key)) {
     return NextResponse.json({ ok: true, duplicate: true, shard: shardNo });
   }
-  kvSet(key, JSON.stringify(tests));
+  await kvSet(key, JSON.stringify(tests));
 
-  log(body.run_id, "EXECUTING", `runner eksternal mengirim hasil shard ${shardNo} (${tests.length} test)`, "info");
+  await log(body.run_id, "EXECUTING", `runner eksternal mengirim hasil shard ${shardNo} (${tests.length} test)`, "info");
 
   // rangkai hasil seluruh shard
   const total = Number((await one<{ n: string }>("SELECT COUNT(*) n FROM kv WHERE key LIKE ?", [`exec:${body.run_id}:%`]))?.n ?? 1);
@@ -53,17 +53,17 @@ export async function POST(req: Request) {
   )).flatMap((r) => J.parse<ExecResult[]>(r.value, []));
 
   const expected = Number(
-    (J.parse<Array<{ total: number }>>(kvGet(`shards:${body.run_id}`), [])[0]?.total ?? total),
+    (J.parse<Array<{ total: number }>>(await kvGet(`shards:${body.run_id}`), [])[0]?.total ?? total),
   );
   if (total >= expected) {
-    kvSet(`exec:${body.run_id}`, JSON.stringify(merged));
-    log(body.run_id, "EXECUTING", `semua ${total} shard masuk, lanjut analisis hasil`);
+    await kvSet(`exec:${body.run_id}`, JSON.stringify(merged));
+    await log(body.run_id, "EXECUTING", `semua ${total} shard masuk, lanjut analisis hasil`);
     advanceRun(body.run_id).catch(() => {});
   }
 
   if (body.usage) {
-    kvSet(`usage:${body.run_id}`, JSON.stringify(body.usage));
-    dbRun("INSERT INTO kv(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    await kvSet(`usage:${body.run_id}`, JSON.stringify(body.usage));
+    await dbRun("INSERT INTO kv(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
       [`runner_usage:${body.run_id}`, JSON.stringify(body.usage), nowIso()]);
   }
 
@@ -76,8 +76,8 @@ export async function GET(req: Request) {
   const runId = new URL(req.url).searchParams.get("run_id");
   if (!runId) return unprocessable("run_id wajib diisi");
   const generated = J.parse<Array<{ conceptId: string; file: string; title: string; layer: string; tags: string[]; covers: string[]; priority: string; code: string }>>(
-    kvGet(`generated:${runId}`), []);
-  const shards = J.parse<Array<{ index: number; total: number; testIds: string[]; estimatedMs: number }>>(kvGet(`shards:${runId}`), []);
+    await kvGet(`generated:${runId}`), []);
+  const shards = J.parse<Array<{ index: number; total: number; testIds: string[]; estimatedMs: number }>>(await kvGet(`shards:${runId}`), []);
   const env = await one<{ base_url: string; api_base_url: string; name: string }>(
     `SELECT e.base_url, e.api_base_url, e.name FROM environments e JOIN runs r ON r.environment_id = e.id WHERE r.id = ?`, [runId]);
   if (!generated.length || !shards.length) return problem(409, "Run belum sampai tahap EXECUTING");

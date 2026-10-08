@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
-import { headers } from "next/headers";
-import { publicReportByToken, publicReportByRunId } from "@/lib/pipeline/actions";
+import { publicReportByToken } from "@/lib/pipeline/actions";
 import { fmtPct, fmtDuration, fmtDate, shortSha } from "@/lib/util";
 import { fmtNum } from "@/lib/util";
 import type { RunSummary } from "@/lib/types";
@@ -10,21 +9,11 @@ export const dynamic = "force-dynamic";
 /**
  * Laporan read-only untuk stakeholder tanpa login (signed link, FR-RPT-07).
  * Halaman ini sengaja TIDAK memakai Shell dashboard — cleaned layout printable.
- * Menerima baik token (signed) maupun runId sebagai fallback.
  */
 export default async function PublicReport({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  // Try token first, then fall back to runId
-  let data = await publicReportByToken(token);
-  if (!data) {
-    data = await publicReportByRunId(token);
-  }
+  const data = await publicReportByToken(token);
   if (!data) notFound();
-
-  // Security headers: noindex, no referrer
-  const headersList = await headers();
-  headersList.set("X-Robots-Tag", "noindex");
-  headersList.set("Referrer-Policy", "no-referrer");
 
   const s = data.summary as RunSummary | null;
 

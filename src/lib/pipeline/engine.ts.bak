@@ -16,9 +16,6 @@ import type { ArchModel, CoverageEntry, Analysis, TestPlan } from "../contracts"
 import { rng, fmtPct, clamp } from "../util";
 import type { Lang } from "../i18n";
 import { randomBytes } from "node:crypto";
-import { planTestsWithLLM } from "./plan-llm";
-import { generateTestsWithLLM } from "./generate-llm";
-import { healTestsWithLLM } from "./heal-llm";
 
 /**
  * ORCHESTRATOR — state machine durable (Arsitektur §4).
@@ -271,28 +268,22 @@ async function drivePipeline(ctx: Ctx) {
   // ── 4. PLANNING ─────────────────────────────────────────────────────────
   if ((await st("PLANNING")) === "pending") {
     await s.start("PLANNING");
-    const { plan, metrics: planMetrics } = await planTestsWithLLM(analysis);
+    const plan = planTestsDeterministic(analysis);
     await kvSet(`plan:${runId}`, JSON.stringify(plan));
-    await kvSet(`plan_metrics:${runId}`, JSON.stringify(planMetrics));
     await s.ok("PLANNING", { concepts: plan.concepts.length, p0: plan.concepts.filter((c) => c.priority === "P0").length });
-    await log(runId, "PLANNING", `LLM planner: ${planMetrics.provider ?? "mock"} ${planMetrics.model ?? ""} · ${planMetrics.inputTokens}→${planMetrics.outputTokens} tok · $${planMetrics.costUsd.toFixed(4)}`);
     await sleep(delay);
   }
   const plan = J.parse<TestPlan | null>(await kvGet(`plan:${runId}`), null);
   if (!plan) throw new Error("test plan hilang");
 
   // ── 5. GENERATING ───────────────────────────────────────────────────────
-  let generated = J.parse<GeneratedTest[]>(await kvGet(`generated:${runId}`), []);
+  let generated: GeneratedTest[] = J.parse<GeneratedTest[]>(await kvGet(`generated:${runId}`), []);
   if ((await st("GENERATING")) === "pending") {
     await s.start("GENERATING");
-    const scaffoldRoot = (await one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId]))?.scaffold_root ?? "autoqa";
-    const { tests, metrics: genMetrics } = await generateTestsWithLLM(plan, scaffoldRoot);
-    generated = tests;
+    generated = generateTests(plan, (await one<{ scaffold_root: string }>("SELECT scaffold_root FROM projects WHERE id = ?", [ctx.projectId]))?.scaffold_root ?? "autoqa");
     for (const g of generated) ws.files[g.file] = g.code;
     await kvSet(`generated:${runId}`, JSON.stringify(generated));
-    await kvSet(`gen_metrics:${runId}`, JSON.stringify(genMetrics));
     await s.ok("GENERATING", { files: generated.length, api: generated.filter((g) => g.layer === "api").length, ui: generated.filter((g) => g.layer === "ui").length, e2e: generated.filter((g) => g.layer === "e2e").length });
-    await log(runId, "GENERATING", `LLM generator: ${genMetrics.provider ?? "mock"} ${genMetrics.model ?? ""} · ${genMetrics.inputTokens}→${genMetrics.outputTokens} tok · $${genMetrics.costUsd.toFixed(4)}`);
     await sleep(delay);
   }
 
@@ -304,12 +295,13 @@ async function drivePipeline(ctx: Ctx) {
       await s.start("HEALING");
       await log(runId, "VALIDATING", `Quality gate gagal: ${gate.failures.length} masalah. Self-heal iterasi ${iteration + 1}/3`, "warn");
     }
-    const failed = gate.failures.map((f) => ({ testId: f.testId, error: f.message, gate: f.gate }));
-    const { tests: healedTests, metrics: healMetrics } = await healTestsWithLLM(generated, failed, 3 - iteration);
-    generated = healedTests;
+    const failuresByTest = new Map<string, string[]>();
+    for (const f of gate.failures) failuresByTest.set(f.testId, [...(failuresByTest.get(f.testId) ?? []), f.message]);
+    generated = generated.map((g) => {
+      const reasons = failuresByTest.get(g.conceptId);
+      return reasons ? healTest(g, reasons.join("; ")) : g;
+    });
     for (const g of generated) ws.files[g.file] = g.code;
-    await kvSet(`heal_metrics:${runId}`, JSON.stringify(healMetrics));
-    await log(runId, "HEALING", `LLM healer: ${healMetrics.provider ?? "mock"} · ${healMetrics.inputTokens}→${healMetrics.outputTokens} tok · $${healMetrics.costUsd.toFixed(4)}`);
     iteration++;
     if ((await st("VALIDATING")) === "pending" || (await st("HEALING")) === "running") await s.start("VALIDATING");
     gate = qualityGate(generated, `${runId}:gate`, iteration);

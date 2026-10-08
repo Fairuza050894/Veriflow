@@ -10,7 +10,7 @@ async function post(url: string, body?: unknown) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? `HTTP ${res.status}`);
   return data as Record<string, unknown>;
 }
 
@@ -28,8 +28,8 @@ export function RunButton({ projectId, label = "Jalankan Run" }: { projectId: st
           setBusy(true); setErr(null);
           start(async () => {
             try {
-              const r = await post(`/api/v1/projects/${projectId}/runs`);
-              router.push(`/runs/${r.runId}`);
+              const r = await post(`/api/v1/projects/${projectId}/runs`, {});
+              router.push(`/runs/${r.run_id}`);
               router.refresh();
             } catch (e) {
               setErr((e as Error).message);
@@ -40,7 +40,7 @@ export function RunButton({ projectId, label = "Jalankan Run" }: { projectId: st
       >
         {busy ? <Spinner /> : "▶"} {label}
       </button>
-      {err ? <span className="absolute left-0 top-full z-20 mt-1 whitespace-nowrap text-[11px] text-stop">{err}</span> : null}
+      {err ? <span role="alert" className="mt-1 max-w-xs text-xs text-stop">{err}</span> : null}
     </span>
   );
 }

@@ -15,7 +15,7 @@ model Organization {
   id        String   @id @default(cuid())
   name      String
   plan      String   @default("free")
-  createdAt DateTime @default(now())
+  createdAt String @map("created_at")
   projects  Project[]
 
   @@map("organizations")
@@ -23,18 +23,18 @@ model Organization {
 
 model Project {
   id             String       @id @default(cuid())
-  orgId          String
+  orgId          String @map("org_id")
   organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   name           String
-  repoProvider   String       @default("github")
-  repoUrl        String
-  defaultBranch  String       @default("main")
+  repoProvider   String       @default("github") @map("repo_provider")
+  repoUrl        String @map("repo_url")
+  defaultBranch  String       @default("main") @map("default_branch")
   subfolder      String?
   mode           String       @default("FULL_AUTO")
-  scaffoldRoot   String       @default("autoqa")
+  scaffoldRoot   String       @default("autoqa") @map("scaffold_root")
   settings       String       @default("{}") // JSON
   detected       String?      // JSON
-  createdAt      DateTime     @default(now())
+  createdAt      String @map("created_at")
   environments   Environment[]
   recipients     Recipient[]
   runs           Run[]
@@ -46,15 +46,15 @@ model Project {
 
 model Environment {
   id              String    @id @default(cuid())
-  projectId       String
+  projectId       String @map("project_id")
   project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name            String
-  baseUrl         String
-  apiBaseUrl      String    @default("")
-  authStrategy    String    @default("none")
-  readOnly        Boolean   @default(false)
-  egressAllowlist String?
-  secretRef       String?
+  baseUrl         String @map("base_url")
+  apiBaseUrl      String    @default("") @map("api_base_url")
+  authStrategy    String    @default("none") @map("auth_strategy")
+  readOnly        Int   @default(0) @map("read_only")
+  egressAllowlist String? @map("egress_allowlist")
+  secretRef       String? @map("secret_ref")
   runs            Run[]
 
   @@index([projectId])
@@ -63,36 +63,36 @@ model Environment {
 
 model Recipient {
   id            String   @id @default(cuid())
-  projectId     String
+  projectId     String @map("project_id")
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   email         String
   kind          String   @default("to") // to, cc, bcc
   locale        String   @default("id")
-  verifiedAt    DateTime?
-  unsubscribedAt DateTime?
+  verifiedAt    String? @map("verified_at")
+  unsubscribedAt String? @map("unsubscribed_at")
 
   @@map("recipients")
 }
 
 model Run {
   id              String     @id @default(cuid())
-  projectId       String
+  projectId       String @map("project_id")
   project         Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  environmentId   String?
+  environmentId   String? @map("environment_id")
   environment     Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   trigger         String     @default("manual")
-  commitSha       String     @default("")
+  commitSha       String     @default("") @map("commit_sha")
   branch          String     @default("main")
   mode            String     @default("FULL_AUTO")
   status          String
-  idempotencyKey  String     @unique
-  startedAt       DateTime?
-  finishedAt      DateTime?
+  idempotencyKey  String     @unique @map("idempotency_key")
+  startedAt       String? @map("started_at")
+  finishedAt      String? @map("finished_at")
   summary         String?    // JSON
   cost            String?    // JSON
-  reportUrl       String?
+  reportUrl       String? @map("report_url")
   error           String?
-  createdAt       DateTime   @default(now())
+  createdAt       String @map("created_at")
   steps           RunStep[]
   logs            RunLog[]
   testResults     TestResult[]
@@ -110,13 +110,13 @@ model Run {
 
 model RunStep {
   id          String   @id @default(cuid())
-  runId       String
+  runId       String @map("run_id")
   run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   name        String
   status      String   @default("pending")
   attempt     Int      @default(0)
-  startedAt   DateTime?
-  finishedAt  DateTime?
+  startedAt   String? @map("started_at")
+  finishedAt  String? @map("finished_at")
   detail      String?
   seq         Int      @default(0)
 
@@ -126,12 +126,12 @@ model RunStep {
 
 model RunLog {
   id        Int      @id @default(autoincrement())
-  runId     String
+  runId     String @map("run_id")
   run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   step      String
   level     String   @default("info")
   message   String
-  ts        DateTime @default(now())
+  ts        String
 
   @@index([runId])
   @@map("run_logs")
@@ -139,21 +139,21 @@ model RunLog {
 
 model TestResult {
   id              String   @id @default(cuid())
-  runId           String
+  runId           String @map("run_id")
   run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  projectId       String
+  projectId       String @map("project_id")
   file            String
   title           String
   layer           String   @default("ui")
   tags            String   @default("[]") // JSON
   status          String
-  durationMs      Int      @default(0)
+  durationMs      Int      @default(0) @map("duration_ms")
   retries         Int      @default(0)
-  errorMessage    String?
-  errorCategory   String?
-  promptVersion   String?
+  errorMessage    String? @map("error_message")
+  errorCategory   String? @map("error_category")
+  promptVersion   String? @map("prompt_version")
   model           String?
-  quarantined     Boolean  @default(false)
+  quarantined     Int  @default(0)
   covers          String?  // JSON
   origin          String   @default("ai")
 
@@ -164,15 +164,15 @@ model TestResult {
 
 model TestStat {
   id                String   @id @default(cuid())
-  projectId         String
+  projectId         String @map("project_id")
   project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   file              String
   title             String
   runs              Int      @default(0)
-  avgDurationMs     Int      @default(0)
-  flakyScore        Float    @default(0)
-  consecutiveGreen  Int      @default(0)
-  lastStatus        String   @default("passed")
+  avgDurationMs     Int      @default(0) @map("avg_duration_ms")
+  flakyScore        Float    @default(0) @map("flaky_score")
+  consecutiveGreen  Int      @default(0) @map("consecutive_green")
+  lastStatus        String   @default("passed") @map("last_status")
 
   @@unique([projectId, file, title])
   @@map("test_stats")
@@ -180,18 +180,18 @@ model TestStat {
 
 model EmailMessage {
   id              String   @id @default(cuid())
-  runId           String?
+  runId           String? @map("run_id")
   run             Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
   kind            String
-  toEmail         String
+  toEmail         String @map("to_email")
   subject         String
   status          String   @default("queued")
   attempts        Int      @default(0)
-  bodyHtml        String?
-  bodyText        String?
-  idempotencyKey  String   @unique
-  createdAt       DateTime @default(now())
-  sentAt          DateTime?
+  bodyHtml        String? @map("body_html")
+  bodyText        String? @map("body_text")
+  idempotencyKey  String   @unique @map("idempotency_key")
+  createdAt       String @map("created_at")
+  sentAt          String? @map("sent_at")
 
   @@index([runId])
   @@map("email_messages")
@@ -199,27 +199,27 @@ model EmailMessage {
 
 model ReportLink {
   id            String   @id @default(cuid())
-  runId         String
+  runId         String @map("run_id")
   run           Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  tokenHash     String   @unique
-  passwordHash  String?
-  expiresAt     DateTime
-  revokedAt     DateTime?
+  tokenHash     String   @unique @map("token_hash")
+  passwordHash  String? @map("password_hash")
+  expiresAt     String @map("expires_at")
+  revokedAt     String? @map("revoked_at")
 
   @@map("report_links")
 }
 
 model ArchSnapshot {
   id                String   @id @default(cuid())
-  projectId         String
-  runId             String?
+  projectId         String @map("project_id")
+  runId             String? @map("run_id")
   run               Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
-  commitSha         String
+  commitSha         String @map("commit_sha")
   model             String   // JSON
-  nodeCount         Int      @default(0)
-  edgeCount         Int      @default(0)
-  extractorStatus   String   @default("[]") // JSON
-  createdAt         DateTime @default(now())
+  nodeCount         Int      @default(0) @map("node_count")
+  edgeCount         Int      @default(0) @map("edge_count")
+  extractorStatus   String   @default("[]") @map("extractor_status") // JSON
+  createdAt         String @map("created_at")
   diagrams          Diagram[]
   findings          ArchFinding[]
 
@@ -229,32 +229,32 @@ model ArchSnapshot {
 
 model Diagram {
   id            String       @id @default(cuid())
-  snapshotId    String
+  snapshotId    String @map("snapshot_id")
   snapshot      ArchSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  runId         String
+  runId         String @map("run_id")
   run           Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
   kind          String
   title         String
   audience      String       @default("internal")
   syntax        String       @default("mermaid")
   source        String
-  nodeCount     Int          @default(0)
-  truncated     Boolean      @default(false)
-  aiSummary     String?
+  nodeCount     Int          @default(0) @map("node_count")
+  truncated     Int      @default(0)
+  aiSummary     String? @map("ai_summary")
   status        String       @default("ok")
-  inEmail       Boolean      @default(false)
-  altText       String?
+  inEmail       Int      @default(0) @map("in_email")
+  altText       String? @map("alt_text")
 
   @@index([runId])
   @@map("diagrams")
 }
 
 model NodeCoverage {
-  runId       String
-  nodeId      String
+  runId       String @map("run_id")
+  nodeId      String @map("node_id")
   run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   kind        String
-  testsTotal  Int      @default(0)
+  testsTotal  Int      @default(0) @map("tests_total")
   passed      Int      @default(0)
   failed      Int      @default(0)
   flaky       Int      @default(0)
@@ -266,7 +266,7 @@ model NodeCoverage {
 
 model ArchFinding {
   id        String       @id @default(cuid())
-  snapshotId String
+  snapshotId String @map("snapshot_id")
   snapshot  ArchSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   code      String
   severity  String
@@ -280,30 +280,30 @@ model ArchFinding {
 
 model DevOpsFinding {
   id        String   @id @default(cuid())
-  runId     String
+  runId     String @map("run_id")
   run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   tool      String
   severity  String
   rule      String
   location  String
   message   String
-  fixHint   String?
+  fixHint   String? @map("fix_hint")
 
   @@map("devops_findings")
 }
 
 model AiCall {
   id              String   @id @default(cuid())
-  runId           String
+  runId           String @map("run_id")
   run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   step            String
-  promptName      String
-  promptVersion   String
+  promptName      String @map("prompt_name")
+  promptVersion   String @map("prompt_version")
   model           String
-  inputTokens     Int      @default(0)
-  outputTokens    Int      @default(0)
-  costUsd         Float    @default(0)
-  latencyMs       Int      @default(0)
+  inputTokens     Int      @default(0) @map("input_tokens")
+  outputTokens    Int      @default(0) @map("output_tokens")
+  costUsd         Float    @default(0) @map("cost_usd")
+  latencyMs       Int      @default(0) @map("latency_ms")
 
   @@index([runId])
   @@map("ai_calls")
@@ -313,10 +313,10 @@ model PromptVersion {
   id           String   @id @default(cuid())
   name         String
   version      String
-  contentHash  String
+  contentHash  String @map("content_hash")
   path         String
   status       String   @default("active")
-  createdAt    DateTime @default(now())
+  createdAt    String @map("created_at")
 
   @@unique([name, version])
   @@map("prompt_versions")
@@ -325,7 +325,7 @@ model PromptVersion {
 model Kv {
   key        String   @id
   value      String
-  updatedAt  DateTime @default(now()) @updatedAt
+  updatedAt  String @map("updated_at")
 
   @@map("kv")
 }

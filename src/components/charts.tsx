@@ -45,7 +45,7 @@ export function PassTrend({ points }: { points: Array<{ day: string; rate: numbe
       {[0, 0.25, 0.5, 0.75, 1].map((f) => (
         <g key={f}>
           <line x1={padX} x2={w - padX} y1={padY + f * (h - padY * 2)} y2={padY + f * (h - padY * 2)} stroke="#1e2b47" strokeDasharray="3 4" />
-          <text x={4} y={padY + f * (h - padY * 2) + 4} fill="#475569" fontSize="10">{fmtPct(min + f * (max - min))}</text>
+           <text x={4} y={padY + f * (h - padY * 2) + 4} fill="#94a3b8" fontSize="10">{fmtPct(max - f * (max - min))}</text>
         </g>
       ))}
       <defs>

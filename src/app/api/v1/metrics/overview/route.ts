@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 /** GET /api/v1/metrics/overview — data untuk KPI dashboard (FR-DSH-01). */
 export async function GET() {
-  ensureSeeded();
-  return NextResponse.json(overview());
+  await ensureSeeded();
+  return NextResponse.json(await overview());
 }
 
 /** POST tidak dilayani (endpoint baca saja). */

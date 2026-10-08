@@ -50,7 +50,7 @@ export async function executeShard(
   shard: Shard,
   tests: GeneratedTest[],
   seed: string,
-  opts: { onProgress?: (done: number, total: number) => void; delayMs?: number } = {},
+  opts: { onProgress?: (done: number, total: number) => void | Promise<unknown>; delayMs?: number } = {},
 ): Promise<ExecResult[]> {
   const byId = new Map(tests.map((t) => [t.conceptId, t]));
   const delay = opts.delayMs ?? Number(process.env.VERIFLOW_STEP_DELAY_MS ?? 120);
@@ -105,7 +105,7 @@ export async function executeShard(
       errorCategory: category,
     });
     if (delay) await sleep(delay);
-    opts.onProgress?.(i + 1, shard.testIds.length);
+    await opts.onProgress?.(i + 1, shard.testIds.length);
   }
   return out;
 }

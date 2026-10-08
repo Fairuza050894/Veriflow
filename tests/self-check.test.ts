@@ -142,9 +142,9 @@ describe("Core Libraries", () => {
     assert.ok(steps.includes("EXECUTING"));
     assert.ok(steps.includes("REPORTING"));
     assert.ok(steps.includes("NOTIFYING"));
-    for (const step of steps) {
-      assert.ok(typeof mod.STEP_META[step].timeoutMs === "number");
-      assert.ok(typeof mod.STEP_META[step].retries === "number");
+    for (const meta of Object.values(mod.STEP_META)) {
+      assert.ok(typeof meta.timeoutMs === "number");
+      assert.ok(typeof meta.retries === "number");
     }
   });
 
@@ -222,21 +222,21 @@ describe("Pipeline Engine", () => {
   test("actions.ts exports approval + report + diff", () => {
     const content = readFileSync(resolve(ROOT, "src/lib/pipeline/actions.ts"), "utf8");
     assert.ok(content.includes("export async function decideReview"));
-    assert.ok(content.includes("export function cancelRun"));
-    assert.ok(content.includes("export function publicReportByToken"));
-    assert.ok(content.includes("export function snapshotDiff"));
+    assert.ok(content.includes("export async function cancelRun"));
+    assert.ok(content.includes("export async function publicReportByToken"));
+    assert.ok(content.includes("export async function snapshotDiff"));
     // approve/reject use decideReview with "approve"/"reject"
     // resendEmail is inline in route handler
   });
 
   test("queries.ts exports overview + runDetail + projectById + seed", () => {
     const content = readFileSync(resolve(ROOT, "src/lib/queries.ts"), "utf8");
-    assert.ok(content.includes("export function overview"));
-    assert.ok(content.includes("export function runDetail"));
-    assert.ok(content.includes("export function projectById"));
-    assert.ok(content.includes("export function ensureSeeded"));
-    assert.ok(content.includes("export function seedDemo"));
-    assert.ok(content.includes("export function allRunRows"));
+    assert.ok(content.includes("export async function overview"));
+    assert.ok(content.includes("export async function runDetail"));
+    assert.ok(content.includes("export async function projectById"));
+    assert.ok(content.includes("export async function ensureSeeded"));
+    assert.ok(content.includes("export async function seedDemo"));
+    assert.ok(content.includes("export async function allRunRows"));
   });
 });
 
@@ -323,8 +323,7 @@ describe("End-to-End Smoke (requires running server)", () => {
   // These run only if TEST_E2E=1 and server is up
   const BASE = process.env.TEST_BASE_URL || "http://localhost:3000";
 
-  test("GET /api/v1/metrics/overview returns 200", async () => {
-    if (!process.env.TEST_E2E) return; // skipped by default
+  test("GET /api/v1/metrics/overview returns 200", { skip: process.env.TEST_E2E !== "1" }, async () => {
     const res = await fetch(`${BASE}/api/v1/metrics/overview`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
@@ -332,17 +331,45 @@ describe("End-to-End Smoke (requires running server)", () => {
     assert.ok(typeof data.passRate7d === "number");
   });
 
-  test("POST /api/v1/projects/quick-run creates run", async () => {
-    if (!process.env.TEST_E2E) return;
+  test("quick-run rejects invalid input before creating projects", { skip: process.env.TEST_E2E !== "1" }, async () => {
+    const endpoint = `${BASE}/api/v1/projects/quick-run`;
+    const repo_url = `https://github.com/smoke/invalid-${crypto.randomUUID()}`;
+    for (const body of [null, [], { repo_url, recipients: "qa@example.com" },
+      { repo_url, recipients: ["qa@example.com", "invalid"] },
+      { repo_url, extra_recipients: [42] }, { repo_url, branch: 42 },
+      { repo_url, mode: "INVALID" }, { repo_url, base_url: "file:///etc/passwd" },
+      { repo_url, subfolder: "../outside" }, { repo_url, idempotency_key: "" }]) {
+      const res = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      assert.strictEqual(res.status, 422, JSON.stringify(body));
+    }
+    const malformed = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+    assert.strictEqual(malformed.status, 400);
+    const after = await (await fetch(endpoint)).json();
+    assert.equal(after.projects.some((project: { repo_url: string }) => project.repo_url === repo_url), false);
+  });
+
+  test("quick-run completes and publishes a signed report", { skip: process.env.TEST_E2E !== "1", timeout: 60000 }, async () => {
     const res = await fetch(`${BASE}/api/v1/projects/quick-run`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repo_url: "https://github.com/Fairuza050894/LogiTrack", name: "LogiTrack" })
+      body: JSON.stringify({ repo_url: "https://github.com/Fairuza050894/LogiTrack", idempotency_key: `smoke:${crypto.randomUUID()}` })
     });
-    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.status, 202);
     const data = await res.json();
     assert.ok(data.run_id);
     assert.ok(data.stream);
+    assert.deepStrictEqual(data.recipients, ["qa@example.com"]);
+    const stream = await fetch(new URL(data.stream, BASE), { signal: AbortSignal.timeout(50000) });
+    assert.strictEqual(stream.status, 200);
+    const events = await stream.text();
+    const completion = events.match(/event: run.completed\ndata: ([^\n]+)/);
+    assert.ok(completion, events);
+    const completed = JSON.parse(completion[1]);
+    assert.ok(["COMPLETED", "COMPLETED_WITH_WARNINGS"].includes(completed.status), events);
+    assert.ok(completed.summary.total > 0);
+    const report = await fetch(new URL(data.report, BASE));
+    assert.strictEqual(report.status, 200);
+    assert.match(await report.text(), /SIMULASI/);
   });
 });
 

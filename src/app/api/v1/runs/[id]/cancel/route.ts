@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!(await one<{ id: string }>("SELECT id FROM runs WHERE id = ?", [id]))) return notFound("Run tidak ditemukan");
-  return NextResponse.json(cancelRun(id));
+  return NextResponse.json(await cancelRun(id));
 }
 
 /** GET /api/v1/runs/{id}/logs — buffer log untuk klien non-SSE. */
